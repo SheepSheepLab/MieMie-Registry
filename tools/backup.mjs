@@ -1,8 +1,6 @@
-import { mkdir } from 'node:fs/promises';
-import { resolve } from 'node:path';
-import { loadConfig } from '../src/config.js';
-import { openStore } from '../src/store.js';
-const config = loadConfig(), store = openStore(config.databasePath);
-await mkdir('backups',{recursive:true,mode:0o700});
-const file = resolve('backups',`registry-${new Date().toISOString().replace(/[:.]/g,'-')}.sqlite`);
-try { await store.backup(file); console.log('Consistent SQLite backup created in backups/. Treat it as private identity data.'); } finally { store.close(); }
+// SPDX-License-Identifier: GPL-3.0-or-later
+import { backupDatabase } from './sqlite-backup.mjs';
+// Backups need neither OAuth credentials nor migrations and must not create or
+// upgrade the source database.
+await backupDatabase(process.env.DATABASE_PATH || './data/registry.sqlite', process.env.BACKUP_DIRECTORY || './backups');
+console.log('Consistent SQLite backup created. Treat backups as private identity data.');

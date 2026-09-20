@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+services:
+  registry:
+    build: .
+    init: true
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 8787
+      DATABASE_PATH: /data/registry.sqlite
+      BACKUP_DIRECTORY: /backups
+    ports:
+      - "127.0.0.1:8787:8787"
+    volumes:
+      - registry-data:/data
+      - registry-backups:/backups
+    read_only: true
+    tmpfs:
+      - /tmp:mode=1777,size=16m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    stop_grace_period: 15s
+volumes:
+  registry-data:
+  registry-backups:

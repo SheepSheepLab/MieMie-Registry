@@ -1,0 +1,11 @@
+# Allowlist: private files are never sent to the image builder.
+**
+!Dockerfile
+!package.json
+!package-lock.json
+!src/
+!src/**
+!tools/
+!tools/*.mjs
+!LICENSE
+!THIRD_PARTY_NOTICES.md

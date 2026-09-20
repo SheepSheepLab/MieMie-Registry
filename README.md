@@ -1,8 +1,8 @@
 # MieMie Registry
 
-MieMie Extension Ecosystem MVP 的独立目录与 Discord 投稿服务，当前版本 **0.2.0**。软件代码 Copyright © 2026 SheepSheep，采用 [GNU GPL v3.0 or later](LICENSE)，SPDX：`GPL-3.0-or-later`。
+MieMie Extension Ecosystem MVP 的独立目录与 Discord 投稿服务，当前版本 **0.2.1**。软件代码 Copyright © 2026 SheepSheep，采用 [GNU GPL v3.0 or later](LICENSE)，SPDX：`GPL-3.0-or-later`。
 
-Registry 只持久保存目录元数据、Discord 投稿身份和必要管理记录。**不托管、缓存落盘或镜像社区 Extension 软件文件，不取得社区作品所有权。** GitHub 软件的权威来源始终是作者自己的仓库／Release；Registry 0.2.0 可按已验证 Manifest 将官方 GitHub Release 字节临时读入有界内存，校验后转发给 Hub，解决浏览器 Release Asset CORS 限制。Discord 项目始终跳转作者原帖。
+Registry 只持久保存目录元数据、Discord 投稿身份和必要管理记录。**不托管、缓存落盘或镜像社区 Extension 软件文件，不取得社区作品所有权。** GitHub 软件的权威来源始终是作者自己的仓库／Release；Registry 可按已验证 Manifest 将官方 GitHub Release 字节临时读入有界内存，校验后转发给 Hub，解决浏览器 Release Asset CORS 限制。Discord 项目始终跳转作者原帖。
 
 投稿默认上架，不代表 MieMie 安全审核、作者认证或官方推荐。作品 Author 与 Submitter 是不同字段；Discord 登录只能证明谁提交记录。
 
@@ -21,7 +21,9 @@ npm start
 
 默认只监听 `127.0.0.1:8787`，自动建立 `data/registry.sqlite`。没有 OAuth 配置时公开 Catalog 可运行（初始为空），登录会明确报告尚未配置，不会启用假账号或登录后门。
 
-将 `.env.example` 复制为本地 `.env`，填写自己的 Discord 开发者应用配置，再重新启动。`.env`、数据库和备份均被 Git 忽略。在 Hub 扩展中心填写 Registry 地址；服务端 `CORS_ORIGINS` 必须包含酒馆页面的精确 Origin。
+将 `.env.example` 复制为本地 `.env`，填写自己的 Discord 开发者应用配置，再重新启动。`.env`、数据库和备份均被 Git 忽略。开发测试连接位于 Hub「设置 → 高级 / 开发者选项」，默认折叠；生产 Hub 内置官方 HTTPS 地址，普通用户无需配置。服务端 `CORS_ORIGINS` 必须包含酒馆页面的精确 Origin。
+
+提供 Dockerfile、Compose、健康检查和 SQLite／备份持久卷配置。生产模式缺少真实 HTTPS 地址、OAuth 应用或私有 Secret 时拒绝启动。当前未部署正式公网服务；容器运行、持久卷权限和真实 Discord 授权需在选定托管平台后验证。见 [部署说明](docs/DEPLOYMENT.md)。
 
 ```sh
 npm run build
@@ -45,7 +47,7 @@ npm run backup
 
 Catalog 下架／隐藏不远程删除用户已安装的代码。已安装用户仍可使用本地版本，并直接从原作者 GitHub 检查更新；本阶段没有撤销代码或远程停用机制。
 
-仅测试 GitHub 安装下载时无需 Discord Client Secret：启动 Registry，将酒馆页面 Origin 加入 `CORS_ORIGINS`，在 Hub 扩展中心配置该 Registry 地址即可。浏览器直接读取 GitHub Asset 失败时可使用此受限传输路径；Registry 未启动、来源不获允许或文件校验失败时仍安全拒绝安装。
+开发模式仅测试 GitHub 安装下载时无需 Discord Client Secret：启动 Registry，将酒馆页面 Origin 加入 `CORS_ORIGINS`，在 Hub「设置 → 高级 / 开发者选项」配置本地服务地址即可。浏览器直接读取 GitHub Asset 失败时可使用此受限传输路径；Registry 未启动、来源不获允许或文件校验失败时仍安全拒绝安装。
 
 ## 文档
 
