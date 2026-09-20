@@ -66,7 +66,7 @@ export function createApp({ config, store, discord = createDiscordAdapter(config
       if (method === 'OPTIONS') { res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, OPTIONS'); res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type'); res.setHeader('Access-Control-Max-Age', '600'); res.writeHead(204); res.end(); return; }
       if (!['GET', 'POST', 'PATCH'].includes(method)) fail(405, 'method_not_allowed', '不支持此请求');
       if (method !== 'GET' && (!origin || !config.allowedOrigins.has(origin))) fail(403, 'origin_required', '写入请求必须来自已配置页面');
-      if (path === '/health' && method === 'GET') return send(res, 200, { status: 'ok', version: '0.1.1' });
+      if (path === '/health' && method === 'GET') return send(res, 200, { status: 'ok', version: '0.1.2' });
       if (path === '/' && method === 'GET') { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); res.end('<!doctype html><meta charset="utf-8"><title>MieMie Registry</title><h1>MieMie Registry</h1><p>目录和 Discord 投稿服务。请从 MieMie Hub 扩展中心连接。</p><p>投稿默认上架，不代表安全审核或作者认证。</p>'); return; }
       if (path === '/api/auth/start' && method === 'POST') {
         if (!config.clientId || !config.clientSecret) fail(503, 'oauth_not_configured', 'Registry 尚未配置 Discord OAuth');
@@ -203,8 +203,8 @@ export function createApp({ config, store, discord = createDiscordAdapter(config
     } catch (error) {
       if (res.headersSent) { res.destroy(); return; }
       const status = error.status || 500;
-      if (status === 429) res.setHeader('Retry-After', '60');
-      send(res, status, { error: { code: error.code || 'internal_error', message: status === 500 ? '服务暂时不可用' : error.message } });
+      if (status === 429) res.setHeader('Retry-After', String(error.retryAt ? Math.max(1, Math.ceil((Date.parse(error.retryAt) - now()) / 1000)) : 60));
+      send(res, status, { error: { code: error.code || 'internal_error', message: status === 500 ? '服务暂时不可用' : error.message, ...(error.code === 'github_rate_limited' ? {retryAt: error.retryAt} : {}) } });
     }
   };
   return { handler, close() { for (const controller of relayRequests.keys()) controller.abort(); relayRequests.clear(); flows.clear(); bridges.clear(); rates.clear(); previewCache.clear(); }, store };

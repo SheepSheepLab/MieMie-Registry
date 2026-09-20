@@ -1,6 +1,6 @@
 # 本地与部署准备
 
-Registry 0.1.1 可以独立运行，无需 Hub／Polisher 源码目录；没有云厂商绑定，也不要求立即购买服务器。
+Registry 0.1.2 可以独立运行，无需 Hub／Polisher 源码目录；没有云厂商绑定，也不要求立即购买服务器。
 
 ## 一条命令启动
 
@@ -28,7 +28,7 @@ Registry 0.1.1 可以独立运行，无需 Hub／Polisher 源码目录；没有�
 
 此路径不需要 Discord OAuth 配置或 GitHub Token。Registry 必须能够向 GitHub 官方 API 和 Release Asset 域名发起 HTTPS 请求。
 
-1. 启动 Registry 0.1.1，确认 `/health` 返回对应版本。
+1. 启动 Registry 0.1.2，确认 `/health` 返回对应版本。
 2. 将真实酒馆页面的精确 Origin（协议、域名、端口，不含路径）加入 `CORS_ORIGINS`；重启服务。
 3. 在 Hub 扩展中心的 Registry 连接设置填写服务地址。酒馆和 Registry 必须满足浏览器 HTTPS／混合内容及本地网络访问规则；远程设备不能将 `127.0.0.1` 当作另一台机器的 Registry。
 4. 对作者仓库执行预览／安装。GitHub API 元数据继续直接读取；Asset 受浏览器 CORS 限制时，Hub 可以请求 Registry 受限 relay，服务端校验作者原始字节后转发。

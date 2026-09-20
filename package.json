@@ -1,10 +1,12 @@
 {
   "name": "miemie-registry",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "type": "module",
   "license": "GPL-3.0-or-later",
-  "engines": {"node": ">=24"},
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
     "start": "node --env-file-if-exists=.env src/server.js",
     "build": "node tools/build.mjs",

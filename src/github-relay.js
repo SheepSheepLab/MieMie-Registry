@@ -53,12 +53,22 @@ const assetLock = value => JSON.stringify([value.id, value.name, value.size, val
 
 // A bounded byte transport, never an arbitrary-URL proxy. No downloaded code is
 // executed or stored. Hub independently repeats every package check on receipt.
-export function createGitHubRelay({ fetchImpl = fetch, queryTimeoutMs = 15000, assetTimeoutMs = 60000, operationTimeoutMs = 90000 } = {}) {
-  const headers = { Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'MieMie-Registry/0.1.1' };
+export function createGitHubRelay({ fetchImpl = fetch, queryTimeoutMs = 15000, assetTimeoutMs = 60000, operationTimeoutMs = 90000, now = Date.now, metadataCacheTtlMs = 120000 } = {}) {
+  const headers = { Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'MieMie-Registry/0.1.2' };
+  const repositoryCache = new Map(), metadataCache = new Map(); let rateReset = 0;
+  function limited() {return Object.assign(new Error('GitHub 匿名 API 额度暂时用完，请在配额恢复后重试'), {status: 429, code: 'github_rate_limited', retryAt: new Date(rateReset).toISOString()});}
+  function cacheGet(cache, key) {const item = cache.get(key); if (item && item.until > now()) return item.value; cache.delete(key); return undefined;}
+  function cachePut(cache, key, value) {
+    if (metadataCacheTtlMs <= 0) return;
+    for (const [key, entry] of cache) if (entry.until <= now()) cache.delete(key);
+    if (cache.size >= 64) cache.delete(cache.keys().next().value);
+    cache.set(key, {value, until: now() + Math.min(metadataCacheTtlMs, 120000)});
+  }
   async function read(input, { signal } = {}) {
     if (!keys(input, ['repository', 'releaseId', 'assetId']) || !positive(input.releaseId) || !positive(input.assetId)) fail(400, 'invalid_relay_request', '仅接受 repository、releaseId 和 assetId');
     const repository = githubRepo(input.repository);
     if (repository.url !== input.repository) fail(400, 'invalid_relay_request', '需要规范化的作者 GitHub 仓库地址');
+    if (rateReset > now()) throw limited();
     const controller = new AbortController();
     let rejectAbort;
     const cancelled = new Promise((_, reject) => { rejectAbort = reject; });
@@ -82,7 +92,13 @@ export function createGitHubRelay({ fetchImpl = fetch, queryTimeoutMs = 15000, a
           await response.body?.cancel(); current = next;
         }
         if (response.url && officialURL(response.url) !== current) fail(502, 'unsafe_redirect', '下载响应地址与已验证路径不一致');
-        if (!response.ok) fail(502, 'github_unavailable', '作者 GitHub 资源不可读取或达到访问限额');
+        if (response.status === 429 || (response.status === 403 && response.headers.get('x-ratelimit-remaining') === '0')) {
+          const reset = Number(response.headers.get('x-ratelimit-reset')) * 1000;
+          const retry = Number(response.headers.get('retry-after')) * 1000;
+          rateReset = Math.min(now() + 86400000, Math.max(now() + 1000, Number.isFinite(reset) && reset > now() ? reset : now() + (retry > 0 ? retry : 60000)));
+          await response.body?.cancel(); throw limited();
+        }
+        if (!response.ok) fail(502, 'github_unavailable', '作者 GitHub 暂时不可读取（HTTP ' + response.status + '）');
         if (Number(response.headers.get('content-length')) > limit) fail(502, 'response_too_large', '作者 GitHub 文件超过大小限制');
         if (!response.body?.getReader) fail(502, 'invalid_response', '作者 GitHub 文件不可读取');
         const reader = response.body.getReader(), chunks = []; let length = 0;
@@ -99,12 +115,14 @@ export function createGitHubRelay({ fetchImpl = fetch, queryTimeoutMs = 15000, a
       if (signal?.aborted) disconnect();
       const operation = (async () => {
         const base = `https://api.github.com/repos/${repository.owner}/${repository.repo}`;
-        const repo = decode(await download(base));
+        const repo = cacheGet(repositoryCache, base) || decode(await download(base));
         if (!plain(repo) || repo.private !== false || repo.full_name !== `${repository.owner}/${repository.repo}`) fail(400, 'invalid_repository', '仓库必须公开且使用 GitHub 返回的规范名称');
+        cachePut(repositoryCache, base, {private: false, full_name: repo.full_name});
         const releaseURL = `${base}/releases/${input.releaseId}`;
         const release = validateRelease(decode(await download(releaseURL)), input.releaseId);
         const metadataAsset = asset(release, METADATA, base, 65536);
-        const metadataBytes = await download(metadataAsset.url, { limit: 65536, binary: true });
+        const cacheKey = JSON.stringify([base, release.id, assetLock(metadataAsset)]);
+        const metadataBytes = cacheGet(metadataCache, cacheKey)?.slice() || await download(metadataAsset.url, { limit: 65536, binary: true });
         verifyBytes(metadataBytes, metadataAsset);
         const metadata = validateMetadata(decode(metadataBytes), repository, release);
         const packageAsset = asset(release, metadata.asset.name, base, 16777216);
@@ -119,6 +137,7 @@ export function createGitHubRelay({ fetchImpl = fetch, queryTimeoutMs = 15000, a
         // changed tags, draft transitions and package-name/ID rebinding.
         const fresh = validateRelease(decode(await download(releaseURL)), input.releaseId);
         if (fresh.tag_name !== release.tag_name || assetLock(asset(fresh, METADATA, base, 65536)) !== assetLock(metadataAsset) || assetLock(asset(fresh, metadata.asset.name, base, 16777216)) !== assetLock(packageAsset)) fail(409, 'release_changed', '作者 GitHub Release 在传输期间变化，请重新预览');
+        cachePut(metadataCache, cacheKey, Buffer.from(metadataBytes));
         return bytes;
       })();
       return await Promise.race([operation, cancelled]);

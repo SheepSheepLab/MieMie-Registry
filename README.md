@@ -1,8 +1,8 @@
 # MieMie Registry
 
-MieMie Extension Ecosystem MVP 的独立目录与 Discord 投稿服务，当前版本 **0.1.1**。软件代码 Copyright © 2026 SheepSheep，采用 [GNU GPL v3.0 or later](LICENSE)，SPDX：`GPL-3.0-or-later`。
+MieMie Extension Ecosystem MVP 的独立目录与 Discord 投稿服务，当前版本 **0.1.2**。软件代码 Copyright © 2026 SheepSheep，采用 [GNU GPL v3.0 or later](LICENSE)，SPDX：`GPL-3.0-or-later`。
 
-Registry 只持久保存目录元数据、Discord 投稿身份和必要管理记录。**不托管、缓存落盘或镜像社区 Extension 软件文件，不取得社区作品所有权。** GitHub 软件的权威来源始终是作者自己的仓库／Release；Registry 0.1.1 可按已验证 Manifest 将官方 GitHub Release 字节临时读入有界内存，校验后转发给 Hub，解决浏览器 Release Asset CORS 限制。Discord 项目始终跳转作者原帖。
+Registry 只持久保存目录元数据、Discord 投稿身份和必要管理记录。**不托管、缓存落盘或镜像社区 Extension 软件文件，不取得社区作品所有权。** GitHub 软件的权威来源始终是作者自己的仓库／Release；Registry 0.1.2 可按已验证 Manifest 将官方 GitHub Release 字节临时读入有界内存，校验后转发给 Hub，解决浏览器 Release Asset CORS 限制。Discord 项目始终跳转作者原帖。
 
 投稿默认上架，不代表 MieMie 安全审核、作者认证或官方推荐。作品 Author 与 Submitter 是不同字段；Discord 登录只能证明谁提交记录。
 

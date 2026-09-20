@@ -100,3 +100,10 @@ state 5 分钟有效；Cookie 与 state 一次性使用。取消授权、失去 
 - `POST /api/admin/identities/:discordId/ban {banned:true|false,reason}`。
 
 restore 只恢复管理层可见性，不覆盖投稿者自己的 unlisted 决定。封禁阻止继续提交、编辑与重新上架，仍允许查看、登出、主动下架。封禁不会自动删除历史作品；管理员按需要另行隐藏。审计记录保留在私有数据库，不进入公开 API。
+
+
+### 0.1.2 GitHub 配额错误
+
+上游匿名配额耗尽时返回 HTTP 429：`error.code = github_rate_limited`、`error.retryAt = ISO 时间`，以及准确的 `Retry-After` 秒数。冷却期间不重复请求 GitHub，不返回上游原始正文或 IP。普通网络失败仍为 502，与 Origin 拒绝区分。
+
+仅对验证过的仓库名称／公开状态和机器元数据使用 2 分钟进程内缓存，每类最多 64 条，机器元数据每条最多 64 KiB，软件包不缓存或落盘。每次调用仍重新读取 Release 并在返回前再次验证 Asset 锁；缓存元数据每次重新检查 digest。服务重启缓存清空。

@@ -73,3 +73,37 @@ test('HTTP relay rejects unknown request fields, arbitrary asset, and oversize b
 test('relay has independent per-IP rate limit without requiring authentication',async t=>{const f=await appFixture(t,{githubRelay:{read:async()=>Buffer.from('fixture')}});for(let i=0;i<12;i++)assert.equal((await f.post()).status,200);const response=await f.post();assert.equal(response.status,429);assert.equal(response.headers.get('retry-after'),'60');});
 test('relay enforces two concurrent transfers per IP and cancels them when app closes',async t=>{const pending=[],signals=[];const f=await appFixture(t,{githubRelay:{read:async(body,{signal})=>new Promise((resolve,reject)=>{pending.push(resolve);signals.push(signal);signal.addEventListener('abort',()=>reject(Object.assign(new Error('cancelled'),{status:499})),{once:true});})}});const a=f.post(),b=f.post();while(pending.length<2)await new Promise(resolve=>setTimeout(resolve,1));assert.equal((await f.post()).status,429);f.app.close();assert.ok(signals.every(s=>s.aborted));assert.equal((await a).status,499);assert.equal((await b).status,499);});
 test('real HTTP client disconnection aborts in-flight upstream relay',async t=>{let signal,started;const ready=new Promise(resolve=>started=resolve);const f=await appFixture(t,{githubRelay:{read:async(body,options)=>{signal=options.signal;started();return new Promise((resolve,reject)=>signal.addEventListener('abort',()=>reject(Object.assign(new Error('cancelled'),{status:499})),{once:true}));}}});const req=httpRequest(`${f.base}/api/packages/github/asset`,{method:'POST',headers:{Origin:ORIGIN,'Content-Type':'application/json'}},()=>{});req.on('error',()=>{});req.end(JSON.stringify(input()));await ready;req.destroy();for(let i=0;i<100&&!signal.aborted;i++)await new Promise(resolve=>setTimeout(resolve,1));assert.equal(signal.aborted,true);});
+
+
+test('repeated metadata requests reuse bounded metadata but always revalidate Release locks', async()=>{
+  const f=fixture(); await f.relay.read(input()); const first=f.calls.length;
+  await f.relay.read(input()); assert.equal(f.calls.length-first,2);
+  assert.equal(f.calls.filter(c=>c.url===BASE).length,1);
+  assert.equal(f.calls.filter(c=>c.url.endsWith('/assets/30')).length,1);
+  assert.equal(f.calls.filter(c=>c.url.endsWith('/releases/20')).length,4);
+});
+
+test('metadata cache expiry fetches again and returned bytes cannot poison cached metadata',async()=>{
+  let time=0;const f=fixture({timeouts:1});
+  const relay=createGitHubRelay({now:()=>time,fetchImpl:async(url,request)=>{
+    f.calls.push({url,request});if(url===BASE)return Response.json({private:false,full_name:'Example/Fixture'});
+    if(url.endsWith('/releases/20'))return Response.json(f.release);
+    if(url.endsWith('/assets/30'))return new Response(f.metadataBytes);
+    throw Error('unexpected');
+  }});
+  const first=await relay.read(input());first[0]^=1;
+  assert.deepEqual(await relay.read(input()),f.metadataBytes);
+  time=120001;assert.deepEqual(await relay.read(input()),f.metadataBytes);
+  assert.equal(f.calls.filter(c=>c.url.endsWith('/assets/30')).length,2);
+});
+
+test('upstream quota is a structured 429 with retry time; cooldown prevents hammering and expires',async()=>{
+  let time=100000,calls=0;const relay=createGitHubRelay({now:()=>time,fetchImpl:async()=>{calls++;return new Response('sensitive upstream IP body',{status:403,headers:{'x-ratelimit-remaining':'0','x-ratelimit-reset':'200'}});}});
+  for(let i=0;i<2;i++)await assert.rejects(relay.read(input()),e=>e.status===429&&e.code==='github_rate_limited'&&e.retryAt==='1970-01-01T00:03:20.000Z'&&!e.message.includes('sensitive'));
+  assert.equal(calls,1);time=200001;await assert.rejects(relay.read(input()));assert.equal(calls,2);
+});
+
+test('HTTP quota response preserves retryAt and Retry-After instead of reporting CORS failure',async t=>{
+  const at=new Date(Date.now()+90000).toISOString();const f=await appFixture(t,{githubRelay:{read:async()=>{throw Object.assign(new Error('quota exhausted'),{status:429,code:'github_rate_limited',retryAt:at});}}});
+  const r=await f.post();assert.equal(r.status,429);assert.ok(Number(r.headers.get('retry-after'))>60);assert.equal((await r.json()).error.retryAt,at);
+});
