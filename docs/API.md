@@ -10,8 +10,8 @@
 
 ## Public
 
-- `GET /api/catalog?page=1&pageSize=20&source=github&q=关键词` → `{items,page,pageSize,total,hasMore}`。pageSize 为 1–50；source 可省略或为 github/discord。
-- `GET /api/catalog/:id` → 单条公开项目；下架或隐藏项目返回 404。
+- `GET /api/catalog?page=1&pageSize=20&source=github&q=关键词` → `{items,page,pageSize,total,hasMore}`。pageSize 为 1–50；source 可省略或为 github/discord。未认证只返回 public；携带有效 Registry Bearer 时在服务端验证当前 Guild 成员身份。过滤发生在分页、搜索及 total/hasMore 计算之前，任何查询参数都不能授予权限。
+- `GET /api/catalog/:id` → 单条当前用户可见项目；下架、隐藏、无成员权限及未知 ID 均返回 404。
 - `GET /api/avatars/:opaqueKey` → 受限 PNG；key 为随机不透明标识。
 - `GET /health` → `{status,version}`。
 - `POST /api/packages/github/asset` → 经验证的原始文件字节，`application/octet-stream`、准确 `Content-Length`、`Cache-Control: no-store`。无需 Discord 登录、Bearer Token 或 GitHub Token；必须携带配置允许的 Origin。
@@ -66,7 +66,7 @@ Discord 项目 `github`、`version`、`extensionId` 为 null。只有 `github.co
 1. Hub 在用户点击时同步创建 popup，生成 32 字节随机 `codeVerifier`（base64url 字符串 43 字符），仅存在当前内存；对其 UTF-8 做 SHA-256，再 base64url 得到 `codeChallenge`。
 2. `POST /api/auth/start {codeChallenge,returnOrigin}`。`returnOrigin` 必须等于实际请求 Origin 且在 allowlist。
 3. 返回 `{authorizationUrl,requestId}`。popup 导航此 **Registry** URL，设置只在 OAuth 回调使用的 HttpOnly、SameSite=Lax 浏览器 Cookie，再跳转 Discord。
-4. Discord 使用正常 Authorization Code + state，Registry 服务端用 Client Secret 换取短期 Discord Token，只向 `/users/@me` 读取资料；不申请 email、guilds 或 bot 权限。
+4. Discord 使用正常 Authorization Code + state，Registry 服务端用 Client Secret 换取短期 Discord Token，请求 `identify guilds`，向 `/users/@me` 读取资料，并用 `/users/@me/guilds` 检查成员身份；不申请 email、消息或 bot 权限。
 5. 回调验证一次性 state 和 popup 浏览器 Cookie，刷新内部身份资料，发送：
 
 ```js
@@ -85,11 +85,11 @@ state 5 分钟有效；Cookie 与 state 一次性使用。取消授权、失去 
 - `POST /api/auth/logout {}` → `{ok:true}`，服务器立即删除当前会话。
 - `GET /api/submissions` → `{items}`，只返回本人投稿，额外含 `status`（listed/unlisted）、`moderation`（visible/hidden/unlisted）和 `moderationReason`。
 - `GET /api/github/preview?url=https://github.com/owner/repo` → GitHub 发现对象，供表单预填；必须让用户确认展示信息。
-- `POST /api/submissions` → 201，新项目默认 listed。
+- `POST /api/submissions` → 201，新项目默认 listed，visibility 默认 public；不会扫描仓库自动创建条目。
 - `PATCH /api/submissions/:id` → 修改本人展示字段，不能更改 owner、ID、缓存版本或内部字段。
 - `POST /api/submissions/:id/status {status:"listed"|"unlisted"}`。
 
-创建字段：`name`（1–100）、`description`（1–2000）、`author`（1–100）、`sourceType`、`sourceUrl`、可选 `icon`、`tags`（最多 8 个，每个最多 30 字符）。编辑允许同一字段集合；sourceUrl 重新验证并重新产生仓库发现信息，不继承旧仓库 Hash。
+创建字段：`name`（1–100）、`description`（1–2000）、`author`（1–100）、`sourceType`、`sourceUrl`、可选 `icon`、`tags`（最多 8 个，每个最多 30 字符）、`visibility`（public / discord_guild）与 `visibilitySourceUrl`。编辑允许同一字段集合；sourceUrl 重新验证并重新产生仓库发现信息，不继承旧仓库 Hash。
 
 ## Admin
 
@@ -99,7 +99,7 @@ state 5 分钟有效；Cookie 与 state 一次性使用。取消授权、失去 
 - `POST /api/admin/submissions/:id/moderation {action:"hide"|"unlist"|"restore",reason}`。
 - `POST /api/admin/identities/:discordId/ban {banned:true|false,reason}`。
 
-restore 只恢复管理层可见性，不覆盖投稿者自己的 unlisted 决定。封禁阻止继续提交、编辑与重新上架，仍允许查看、登出、主动下架。封禁不会自动删除历史作品；管理员按需要另行隐藏。审计记录保留在私有数据库，不进入公开 API。
+restore 只恢复管理层可见性，不覆盖投稿者自己的 unlisted 决定。封禁阻止继续提交、编辑及上下架，仍允许查看与登出。封禁不会自动删除历史作品；管理员按需要另行隐藏。审计记录保留在私有数据库，不进入公开 API。
 
 
 ### 0.1.2 GitHub 配额错误
@@ -107,3 +107,13 @@ restore 只恢复管理层可见性，不覆盖投稿者自己的 unlisted 决�
 上游匿名配额耗尽时返回 HTTP 429：`error.code = github_rate_limited`、`error.retryAt = ISO 时间`，以及准确的 `Retry-After` 秒数。冷却期间不重复请求 GitHub，不返回上游原始正文或 IP。普通网络失败仍为 502，与 Origin 拒绝区分。
 
 仅对验证过的仓库名称／公开状态和机器元数据使用 2 分钟进程内缓存，每类最多 64 条，机器元数据每条最多 64 KiB，软件包不缓存或落盘。每次调用仍重新读取 Release 并在返回前再次验证 Asset 锁；缓存元数据每次重新检查 digest。服务重启缓存清空。
+
+## Guild ACL 投稿字段
+
+`visibility` 默认 `public`。`discord_guild` 仅允许从有效 Discord `channels/<guild>/<channel>[/<message>]` 链接确定权限范围；服务器名称不参与判断。Discord 来源直接使用 `sourceUrl`；GitHub 来源需额外提供 `visibilitySourceUrl`。客户端不得传入 `visibilityGuildId`、owner 或其他内部字段。消息／频道实际内容不会被读取，此限制只证明 Guild 成员身份，不是频道访问权限验证。
+
+投稿、编辑受限记录和重新上架均重新验证当前投稿者属于该 Guild；修改来源重新解析，不继承旧 Guild 授权。自己的投稿响应附加 `visibilitySourceUrl` 便于编辑。可见目录只给 `visibility` 标签，不给用户的成员列表或单独的内部 Guild 字段；未经授权完全不返回条目。源 Discord 链接自身仍含其公开结构 ID。
+
+同一投稿者的重复来源会被拒绝；不同身份可以提交同一来源，不能据错误响应探测其他人的受限记录。数据库的 Catalog UUID 区分记录；没有“认证作者”推断。禁止恶意堆积由限流、每人总量和管理员治理处理。
+
+Discord API 不可达、限流或凭据过期时不使用旧的“成员”结果放行。服务器仅在当前 Session 的内存授权上下文中保存 access token；重启后已有数据库 Session 不能恢复 Discord 授权，客户端需重新登录。

@@ -28,6 +28,10 @@ export function discordPost(value) {
   if (u.protocol !== 'https:' || u.hostname !== 'discord.com' || u.port || u.username || u.password || u.search || u.hash || !/^\/channels\/\d{15,22}\/\d{15,22}(?:\/\d{15,22})?$/.test(u.pathname)) fail(400, 'invalid_discord', '仅接受 Discord 服务器频道／帖子链接，不接受附件或邀请链接');
   return u.href;
 }
+export function discordLocation(value) {
+  const url = discordPost(value), [, , guildId, channelId, messageId] = new URL(url).pathname.split('/');
+  return { url, guildId, channelId, messageId: messageId || null };
+}
 export function iconUrl(value) {
   if (!value) return null;
   if (typeof value !== 'string' || value.length > 2048) fail(400, 'invalid_icon', 'Icon URL 无效');
@@ -38,12 +42,21 @@ export function iconUrl(value) {
 }
 export function submissionInput(body) {
   if (!plain(body)) fail(400, 'invalid_input', '需要 JSON 对象');
-  const allowed = new Set(['name', 'description', 'author', 'sourceType', 'sourceUrl', 'icon', 'tags']);
+  const allowed = new Set(['name', 'description', 'author', 'sourceType', 'sourceUrl', 'icon', 'tags', 'visibility', 'visibilitySourceUrl']);
   if (Object.keys(body).some(key => !allowed.has(key))) fail(400, 'invalid_field', '不能修改身份、所有者或内部字段');
   if (!['github', 'discord'].includes(body.sourceType)) fail(400, 'invalid_source', '来源必须为 GitHub 或 Discord');
   const tags = body.tags ?? [];
   if (!Array.isArray(tags) || tags.length > 8) fail(400, 'invalid_tags', '最多 8 个标签');
-  return { name: text(body.name, '名称', 100), description: text(body.description, '简介', 2000), author: text(body.author, '作者', 100), sourceType: body.sourceType, sourceUrl: body.sourceType === 'github' ? githubRepo(body.sourceUrl).url : discordPost(body.sourceUrl), icon: iconUrl(body.icon), tags: [...new Set(tags.map(tag => text(tag, '标签', 30)))] };
+  const visibility = body.visibility ?? 'public';
+  if (!['public', 'discord_guild'].includes(visibility)) fail(400, 'invalid_visibility', '可见范围必须为 public 或 discord_guild');
+  const sourceUrl = body.sourceType === 'github' ? githubRepo(body.sourceUrl).url : discordPost(body.sourceUrl);
+  const discord = body.sourceType === 'discord' ? discordLocation(sourceUrl) : null;
+  let visibilityLocation = null;
+  if (visibility === 'discord_guild') {
+    visibilityLocation = body.sourceType === 'discord' ? discord : discordLocation(body.visibilitySourceUrl);
+    if (body.sourceType === 'discord' && body.visibilitySourceUrl && discordPost(body.visibilitySourceUrl) !== sourceUrl) fail(400, 'invalid_visibility', 'Discord 可见范围必须依据当前原帖');
+  }
+  return { visibility, visibilityGuildId: visibilityLocation?.guildId || null, visibilitySourceUrl: visibilityLocation?.url || null, discord, name: text(body.name, '名称', 100), description: text(body.description, '简介', 2000), author: text(body.author, '作者', 100), sourceType: body.sourceType, sourceUrl, icon: iconUrl(body.icon), tags: [...new Set(tags.map(tag => text(tag, '标签', 30)))] };
 }
 export function version(value) { return typeof value === 'string' && value.trim() === value && /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(value) && value.length < 40; }
 export function compareVersions(a, b) {

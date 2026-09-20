@@ -1,10 +1,14 @@
 # MieMie Registry
 
-MieMie Extension Ecosystem MVP 的独立目录与 Discord 投稿服务，当前版本 **0.1.2**。软件代码 Copyright © 2026 SheepSheep，采用 [GNU GPL v3.0 or later](LICENSE)，SPDX：`GPL-3.0-or-later`。
+MieMie Extension Ecosystem MVP 的独立目录与 Discord 投稿服务，当前版本 **0.2.0**。软件代码 Copyright © 2026 SheepSheep，采用 [GNU GPL v3.0 or later](LICENSE)，SPDX：`GPL-3.0-or-later`。
 
-Registry 只持久保存目录元数据、Discord 投稿身份和必要管理记录。**不托管、缓存落盘或镜像社区 Extension 软件文件，不取得社区作品所有权。** GitHub 软件的权威来源始终是作者自己的仓库／Release；Registry 0.1.2 可按已验证 Manifest 将官方 GitHub Release 字节临时读入有界内存，校验后转发给 Hub，解决浏览器 Release Asset CORS 限制。Discord 项目始终跳转作者原帖。
+Registry 只持久保存目录元数据、Discord 投稿身份和必要管理记录。**不托管、缓存落盘或镜像社区 Extension 软件文件，不取得社区作品所有权。** GitHub 软件的权威来源始终是作者自己的仓库／Release；Registry 0.2.0 可按已验证 Manifest 将官方 GitHub Release 字节临时读入有界内存，校验后转发给 Hub，解决浏览器 Release Asset CORS 限制。Discord 项目始终跳转作者原帖。
 
 投稿默认上架，不代表 MieMie 安全审核、作者认证或官方推荐。作品 Author 与 Submitter 是不同字段；Discord 登录只能证明谁提交记录。
+
+只有用户主动提交的记录进入 Catalog；仓库预览不会创建投稿，也不预置 Polisher。
+
+Discord 原帖可以选择“所有人”或“仅该服务器成员”；GitHub 项目可额外提供 Discord 帖子链接作为相同限制的依据。投稿者必须属于该 Guild。权限使用 Guild ID，不使用服务器名称。
 
 ## 本地运行
 
@@ -29,8 +33,8 @@ npm run backup
 
 ## 功能边界
 
-- 公开目录分页、来源筛选、基础搜索；公开 DTO 不包含 Discord User ID、Username、Email、Token、Session、封禁信息或管理员名单。
-- Discord Authorization Code 登录，只请求 `identify`。每次登录刷新显示名／Username／头像；Snowflake 是内部唯一身份和所有权主键。
+- 匿名公开目录和登录后按 Guild 成员身份过滤的目录；分页、来源筛选、搜索及详情在服务端执行同一 ACL；公开 DTO 不包含 Discord User ID、Username、Email、Token、Session、封禁信息或管理员名单。
+- Discord Authorization Code 登录，只请求 `identify guilds`，不读取消息或邮箱。每次登录刷新显示名／Username／头像；Snowflake 是内部唯一身份和所有权主键。
 - 「我的」投稿、编辑、下架、重新上架；下架保留数据库记录。
 - 服务端 Discord ID 白名单管理员可以隐藏、恢复、管理下架、封禁和解除封禁。普通用户无法调用管理接口。
 - GitHub 公开仓库验证和 Manifest／Release 预填；机器安装兼容性只说明格式可识别，Hub 安装前还必须重新下载并完整校验。

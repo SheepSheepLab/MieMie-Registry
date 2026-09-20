@@ -61,7 +61,7 @@ export function cleanManifest(value, repository, expectedVersion, ref = 'HEAD') 
   return manifest;
 }
 export function createGitHubAdapter({ fetchImpl = fetch } = {}) {
-  const apiHeaders = { Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'MieMie-Registry/0.1.2' };
+  const apiHeaders = { Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'MieMie-Registry/0.2.0' };
   async function json(url, limit = 1048576) { return parseJSON((await boundedFetch(fetchImpl, url, { headers: apiHeaders, limit })).bytes); }
   async function inspect(repoUrl) {
     let repo = githubRepo(repoUrl), base = `https://api.github.com/repos/${repo.owner}/${repo.repo}`;
@@ -105,17 +105,17 @@ export function createGitHubAdapter({ fetchImpl = fetch } = {}) {
   }
   return { inspect };
 }
-export function createDiscordAdapter(config, { fetchImpl = fetch } = {}) {
+export function createDiscordAdapter(config, { fetchImpl = fetch, now = Date.now } = {}) {
   return {
     authorizationUrl(state) {
       const url = new URL('https://discord.com/oauth2/authorize');
-      for (const [k,v] of Object.entries({ response_type: 'code', client_id: config.clientId, scope: 'identify', state, redirect_uri: config.redirectUri })) url.searchParams.set(k,v);
+      for (const [k,v] of Object.entries({ response_type: 'code', client_id: config.clientId, scope: 'identify guilds', state, redirect_uri: config.redirectUri })) url.searchParams.set(k,v);
       return url.href;
     },
     async exchange(code) {
       const result = await boundedFetch(fetchImpl, 'https://discord.com/api/oauth2/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ client_id: config.clientId, client_secret: config.clientSecret, grant_type: 'authorization_code', code, redirect_uri: config.redirectUri }).toString() });
       const tokens = parseJSON(result.bytes);
-      if (!tokens.access_token || tokens.token_type?.toLowerCase() !== 'bearer') fail(502, 'discord_auth_failed', 'Discord 登录失败');
+      if (typeof tokens.access_token !== 'string' || !tokens.access_token || tokens.access_token.length > 4096 || tokens.token_type?.toLowerCase() !== 'bearer' || !Number.isSafeInteger(tokens.expires_in) || tokens.expires_in <= 0 || tokens.expires_in > 31536000 || !['identify','guilds'].every(scope => typeof tokens.scope === 'string' && tokens.scope.split(/\s+/).includes(scope))) fail(502, 'discord_auth_failed', 'Discord 登录失败');
       const userBytes = await boundedFetch(fetchImpl, 'https://discord.com/api/v10/users/@me', { headers: { Authorization: `Bearer ${tokens.access_token}` } });
       const user = parseJSON(userBytes.bytes);
       if (!/^\d{15,22}$/.test(user.id || '')) fail(502, 'discord_profile_invalid', 'Discord 资料无效');
@@ -126,8 +126,27 @@ export function createDiscordAdapter(config, { fetchImpl = fetch } = {}) {
           if (image.response.headers.get('content-type')?.split(';')[0] === 'image/png' && image.bytes.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10]))) profile.avatarBytes = image.bytes;
         } catch { /* profile identity does not depend on the avatar CDN */ }
       }
-      // Discord OAuth credentials are never persisted or returned to the client.
-      return profile;
+      // Returned only to server-side app state, never persisted or serialized to Hub.
+      return { profile, credentials: { accessToken: tokens.access_token, expiresAt: now() + tokens.expires_in * 1000, scopes: ['identify', 'guilds'] } };
+    },
+    async listGuilds(accessToken) {
+      if (typeof accessToken !== 'string' || !accessToken || accessToken.length > 4096) fail(401, 'discord_session_expired', '请重新使用 Discord 登录');
+      const ids = new Set(); let after = '';
+      for (let page = 0; page < 10; page++) {
+        const url = `https://discord.com/api/v10/users/@me/guilds?limit=200${after ? `&after=${after}` : ''}`;
+        const result = await boundedFetch(fetchImpl, url, { limit: 2 * 1024 * 1024, headers: { Authorization: `Bearer ${accessToken}` } });
+        const rows = parseJSON(result.bytes);
+        if (!Array.isArray(rows) || rows.length > 200) fail(502, 'discord_guilds_invalid', 'Discord 服务器成员信息无效');
+        let last = after;
+        for (const row of rows) {
+          if (!plain(row) || !/^\d{15,22}$/.test(row.id || '') || ids.has(row.id) || (after && BigInt(row.id) <= BigInt(after))) fail(502, 'discord_guilds_invalid', 'Discord 服务器成员信息无效');
+          ids.add(row.id); if (!last || BigInt(row.id) > BigInt(last)) last = row.id;
+        }
+        if (rows.length < 200) return [...ids];
+        if (last === after) fail(502, 'discord_guilds_invalid', 'Discord 服务器分页无效');
+        after = last;
+      }
+      fail(502, 'discord_guilds_limit', 'Discord 服务器列表超过当前查询范围');
     }
   };
 }

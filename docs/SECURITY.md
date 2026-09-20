@@ -1,6 +1,6 @@
 # 安全边界与验证
 
-- Discord OAuth 只请求 identify。浏览器绑定、一次性 state（5 分钟）、一次性桥接码（60 秒）、Origin 和 SHA-256 verifier 绑定分层验证。返回 Hub 的不是 Discord OAuth Token。
+- Discord OAuth 只请求 identify 与 guilds，不读取邮箱或消息。浏览器绑定、一次性 state（5 分钟）、一次性桥接码（60 秒）、Origin 和 SHA-256 verifier 绑定分层验证。返回 Hub 的不是 Discord OAuth Token。
 - Registry Session 使用随机 256-bit Token，数据库仅 HMAC 哈希，8 小时默认过期。认证绑定 Origin，Mutation 必须来自精确 allowlist，非 Cookie 认证避免第三方 Cookie 和 ambient-cookie CSRF。
 - 公开 DTO 字段白名单，Discord ID 不进入 Public／我的/Profile 响应；管理员受限接口才取得必要管理 ID。公开头像使用随机服务端 URL。
 - GitHub API 请求只构造固定官方域名，公开 Repo 必须匹配用户指定地址；API 重定向默认拒绝，Release Asset 重定向只接受 GitHub 官方域名；不使用第三方代理、用户 GitHub Token、任意 URL 抓取或 Registry 软件镜像。
@@ -10,7 +10,7 @@
 - Discord 原帖只接受固定官方 channels URL，禁止附件、Invite、非 HTTPS 或用户密码信息 URL。
 - Icon 第一版只有受限 GitHub HTTPS URL／Manifest 安全相对路径，没有上传接口，因此不接受 multipart、data URL 或任意图片字节。Discord 头像只抓取固定 CDN、最大 256 KiB、PNG MIME+signature，不回传带 Snowflake 的源地址。
 - 所有投稿文字是数据；Hub 必须使用 textContent 等安全 DOM API，不能拼接 HTML。Registry HTML 不包含投稿文字；OAuth callback 使用 CSP nonce、转义 JSON、精确 postMessage origin。
-- 限制请求体 16 KiB、名称/描述/标签长度、分页、每 IP 请求、登录次数、每人投稿次数和总数，来源 URL 全库唯一。SQL 参数绑定、事务原子审计。异步上游返回后再次检查封禁状态。
+- 限制请求体 16 KiB、名称/描述/标签长度、分页、每 IP 请求、登录次数、每人投稿次数和总数，来源 URL 同一投稿者内唯一。SQL 参数绑定、事务原子审计。异步上游返回后再次检查封禁状态。
 - 管理员角色只在服务器按当前 ID allowlist 判定。下架／隐藏不删数据，编辑不能转移所有权。管理员恢复不覆盖作者主动下架状态。
 - 数据库、.env、Secret、Session、OAuth Token 不进入 Git 和客户端。测试凭据均有 test-only / Development Fixture 标记，生产服务没有 Mock 登录路径。
 
@@ -24,3 +24,13 @@ relay 另有真实本地 HTTP 接口测试与 Mock GitHub 上游：无 ACAO 的�
 
 
 0.1.2 增加配额冷却及短期仓库／元数据内存缓存（每类最多 64 条，2 分钟有效），不缓存软件包；新鲜 Release 前后验证保持不变。错误只返回分类与重试时间，不转发 GitHub 上游正文中的出口 IP 或其他细节。缓存不是在 GitHub 不可达或限流时使用旧锁授权安装的替代路径。
+
+## 0.2.0 Discord Guild 可见性
+
+Catalog 项目的 `public` / `discord_guild` 访问范围与 GitHub / Discord 来源相互独立。Guild 锚点只从经过校验的 Discord 原帖链接提取，客户端不能直接指定内部 Guild ID；选择或修改受限范围、重新上架时检查投稿者的当前成员身份。
+
+Catalog 列表、搜索、总数和单项详情共用服务端 ACL。未知条目与无权条目返回同样的 404，管理员也不能通过普通发现接口绕过成员限制。未登录不查询 Guild，只得到公开项目。Discord 查询失败或凭据过期时不会回退为“成员”。投稿所有权仍按 Discord User ID 判断，与可见性和 Profile 名称分离。
+
+OAuth access token 仅服务端内存保存，绑定具体会话；不写数据库、日志、浏览器或发布包，也不保存 refresh token。会话结束或进程重启后清理，需重新授权登录。数据库只持久保存身份、投稿、ACL 与必要审计记录。Hub 收到的短期 Registry 会话 Token 不是 Discord Token，仅在当前 iframe 内存使用。
+
+公开 GitHub 软件包始终公开可从作者仓库获得；目录 ACL 不声称隐藏互联网上已公开的源仓库或撤销已安装代码。Discord Guild 成员判断也不表示用户拥有某个私有频道的阅读权限。

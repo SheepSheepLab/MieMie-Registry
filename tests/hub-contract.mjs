@@ -50,10 +50,13 @@ const config = loadConfig({DISCORD_CLIENT_ID: '000000000000000001', DISCORD_CLIE
 let clock = Date.now();
 const profiles = Object.fromEntries(Object.entries(IDS).map(([name,id]) => [name, {id, displayName: 'Development Fixture ' + name, username: 'fixture_' + name, avatarBytes: null}]));
 const githubCalls = [];
+const GUILD = '744444444444444444';
+const memberships = {A: [GUILD], B: [], ADMIN: []};
+let membershipUnavailable = false;
 const app = createApp({config, store, now: () => clock, rateLimit: 10000,
   discord: {authorizationUrl: state => 'https://discord.com/oauth2/authorize?state=' + encodeURIComponent(state), async exchange(code) {
-    assert.ok(profiles[code], 'Mock Discord code unknown'); return {...profiles[code]};
-  }},
+    assert.ok(profiles[code], 'Mock Discord code unknown'); return {profile: {...profiles[code]}, credentials: {accessToken: 'test-only-' + code, expiresAt: clock + 3600000, scopes: ['identify','guilds']}};
+  }, async listGuilds(token) { if (membershipUnavailable) throw Error('Development Fixture Discord outage'); const code = token.replace('test-only-', ''); assert.ok(memberships[code]); return [...memberships[code]]; }},
   github: {async inspect(repoURL) {
     githubCalls.push(repoURL); const url = new URL(repoURL); const [,owner,repo] = url.pathname.split('/');
     return {owner, repo, compatibility: 'external', manifest: {schemaVersion: 1, apiVersion: 1, id: 'fixture.contract', name: 'Development Fixture GitHub', author: 'Actual Work Author',
@@ -153,8 +156,8 @@ try {
   });
   await record('a second real Hub session cannot edit or unlist the first identity submissions', async () => {
     await b.client.login(); assert.equal((await b.client.api('/api/submissions', {authenticated: true})).items.length, 0);
-    await assert.rejects(b.client.api('/api/submissions/' + github.id, {method: 'PATCH', body: {name: 'stolen'}, authenticated: true}), /自己的/);
-    await assert.rejects(b.client.api('/api/submissions/' + github.id + '/status', {method: 'POST', body: {status: 'unlisted'}, authenticated: true}), /自己的/);
+    await assert.rejects(b.client.api('/api/submissions/' + github.id, {method: 'PATCH', body: {name: 'stolen'}, authenticated: true}), /自己的|不存在|不可管理/);
+    await assert.rejects(b.client.api('/api/submissions/' + github.id + '/status', {method: 'POST', body: {status: 'unlisted'}, authenticated: true}), /自己的|不存在|不可管理/);
     await assert.rejects(b.client.api('/api/admin/submissions', {authenticated: true}), /管理员/);
   });
   await record('profile refresh updates display name/avatar while preserving immutable owner and avatar privacy', async () => {
@@ -178,6 +181,43 @@ try {
     const ban = banned => admin.client.api('/api/admin/identities/' + IDS.A + '/ban', {method: 'POST', authenticated: true, body: {banned, reason: 'Development Fixture ban'}});
     await ban(true); await assert.rejects(a.client.api('/api/submissions/' + github.id, {method: 'PATCH', body: {name: 'blocked'}, authenticated: true}), /禁止投稿/); await ban(false);
   });
+  await record('Guild Catalog ACL filters actual Hub member, anonymous and nonmember list/detail/search/count', async () => {
+    const restricted = await a.client.api('/api/submissions', {method:'POST', authenticated:true, body:submit({name:'Secret ACL Fixture', sourceType:'discord', sourceUrl:`https://discord.com/channels/${GUILD}/755555555555555555/777777777777777777`, visibility:'discord_guild'})});
+    const member = await a.client.api('/api/catalog?q=Secret&pageSize=1', {authenticated:true});
+    assert.equal(member.total,1); assert.equal(member.items[0].id,restricted.id); assert.equal(member.hasMore,false);
+    for (const client of [null,b.client]) {
+      const page = client ? await client.api('/api/catalog?q=Secret', {authenticated:true}) : (await anonymous('/api/catalog?q=Secret')).value;
+      assert.equal(page.total,0); assert.deepEqual(Array.from(page.items),[]); assert.equal(page.hasMore,false);
+      if(client) await assert.rejects(client.api('/api/catalog/'+restricted.id,{authenticated:true}),/不存在|不可/);
+      else assert.equal((await anonymous('/api/catalog/'+restricted.id)).status,404);
+    }
+    const anon = (await anonymous('/api/catalog?visibility=public&guildId='+GUILD)).value;
+    assert.ok(!JSON.stringify(anon).includes('Secret ACL Fixture'));
+    assert.equal('visibilityGuildId' in member.items[0],false);
+    await assert.rejects(b.client.api('/api/submissions',{method:'POST',authenticated:true,body:submit({sourceType:'discord',sourceUrl:`https://discord.com/channels/${GUILD}/755555555555555555/788888888888888888`,visibility:'discord_guild'})}),/成员|权限|已加入/);
+    memberships.A=[];
+    assert.equal((await a.client.api('/api/catalog?q=Secret',{authenticated:true})).total,0);
+    await assert.rejects(a.client.api('/api/submissions/'+restricted.id,{method:'PATCH',authenticated:true,body:{description:'Lost membership'}}),/成员|权限|已加入/);
+    memberships.A=[GUILD]; membershipUnavailable=true;
+    await assert.rejects(a.client.api('/api/catalog?q=Secret',{authenticated:true}),/服务器|Discord|成员|暂时|验证/);
+    membershipUnavailable=false;
+    await a.client.api('/api/submissions/'+restricted.id+'/status',{method:'POST',authenticated:true,body:{status:'unlisted'}});
+    memberships.A=[];
+    await assert.rejects(a.client.api('/api/submissions/'+restricted.id+'/status',{method:'POST',authenticated:true,body:{status:'listed'}}),/成员|权限|已加入/);
+    memberships.A=[GUILD];
+  });
+  await record('GitHub uses same Guild ACL; URL edits revalidate membership and cannot reveal another owners hidden duplicate', async () => {
+    const sourceUrl='https://github.com/DevelopmentFixture/PrivateCatalog';
+    const hidden = await a.client.api('/api/submissions',{method:'POST',authenticated:true,body:submit({sourceUrl,name:'Private Github Fixture',visibility:'discord_guild',visibilitySourceUrl:`https://discord.com/channels/${GUILD}/755555555555555555/799999999999999999`})});
+    assert.equal((await a.client.api('/api/catalog?q=Private',{authenticated:true})).total,1);
+    assert.equal((await b.client.api('/api/catalog?q=Private',{authenticated:true})).total,0);
+    const ownDuplicate = await b.client.api('/api/submissions',{method:'POST',authenticated:true,body:submit({sourceUrl,name:'Separate Submission Fixture'})});
+    assert.notEqual(ownDuplicate.id,hidden.id);
+    await assert.rejects(a.client.api('/api/submissions/'+hidden.id,{method:'PATCH',authenticated:true,body:{visibilitySourceUrl:'https://discord.com/channels/899999999999999999/755555555555555555/799999999999999999'}}),/成员|权限|已加入/);
+    await assert.rejects(a.client.api('/api/submissions/'+hidden.id,{method:'PATCH',authenticated:true,body:{visibilityGuildId:GUILD}}),/字段|无效|允许/);
+    await a.client.api('/api/submissions/'+hidden.id+'/status',{method:'POST',authenticated:true,body:{status:'unlisted'}});
+    await b.client.api('/api/submissions/'+ownDuplicate.id+'/status',{method:'POST',authenticated:true,body:{status:'unlisted'}});
+  });
   await record('public Catalog JSON has no private Discord identity, credentials or moderation internals', async () => {
     const {status, value} = await anonymous('/api/catalog'); assert.equal(status, 200); const text = JSON.stringify(value);
     for (const secret of [...Object.values(IDS), profiles.A.username, config.clientSecret, config.sessionSecret]) assert.ok(!text.includes(secret));
@@ -192,7 +232,7 @@ try {
   });
   await record('file-backed SQLite persists ownership and Catalog after reopen', async () => {
     const reopened = openStore(databasePath);
-    try {assert.equal(reopened.db.prepare('SELECT owner_id FROM submissions WHERE id=?').get(github.id).owner_id, IDS.A); assert.equal(reopened.db.prepare('SELECT count(*) AS n FROM submissions').get().n, 2);}
+    try {assert.equal(reopened.db.prepare('SELECT owner_id FROM submissions WHERE id=?').get(github.id).owner_id, IDS.A); assert.equal(reopened.db.prepare('SELECT count(*) AS n FROM submissions').get().n, 5);}
     finally {reopened.close();}
   });
   assert.equal(oauthErrors.length, 0);
