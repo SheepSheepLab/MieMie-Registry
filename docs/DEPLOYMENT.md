@@ -1,6 +1,6 @@
 # 本地与部署准备
 
-Registry 0.1.0 可以独立运行，无需 Hub／Polisher 源码目录；没有云厂商绑定，也不要求立即购买服务器。
+Registry 0.1.1 可以独立运行，无需 Hub／Polisher 源码目录；没有云厂商绑定，也不要求立即购买服务器。
 
 ## 一条命令启动
 
@@ -23,6 +23,17 @@ Registry 0.1.0 可以独立运行，无需 Hub／Polisher 源码目录；没有�
 | MIEMIE_ADMIN_DISCORD_IDS | 私有 Snowflake 管理员白名单，逗号分隔 |
 
 开发时空 SESSION_SECRET 自动产生进程内随机值，重启后旧 Session 失效；使用本地 `.env` 固定随机值可以保留有效会话。真实 Session／Discord 身份仍只在服务端数据库；Hub Token 不做持久存储。
+
+## GitHub 下载 CORS 修复联调
+
+此路径不需要 Discord OAuth 配置或 GitHub Token。Registry 必须能够向 GitHub 官方 API 和 Release Asset 域名发起 HTTPS 请求。
+
+1. 启动 Registry 0.1.1，确认 `/health` 返回对应版本。
+2. 将真实酒馆页面的精确 Origin（协议、域名、端口，不含路径）加入 `CORS_ORIGINS`；重启服务。
+3. 在 Hub 扩展中心的 Registry 连接设置填写服务地址。酒馆和 Registry 必须满足浏览器 HTTPS／混合内容及本地网络访问规则；远程设备不能将 `127.0.0.1` 当作另一台机器的 Registry。
+4. 对作者仓库执行预览／安装。GitHub API 元数据继续直接读取；Asset 受浏览器 CORS 限制时，Hub 可以请求 Registry 受限 relay，服务端校验作者原始字节后转发。
+
+无需自动开启 SillyTavern Proxy，也不会修改用户代理设置。部署反向代理时，此路由不要缓存文件，允许最长 90 秒的上游处理及最多 16 MiB 响应，关闭对此接口的响应内容日志。文件仅临时存在有界进程内存，权威来源仍是作者 GitHub。
 
 ## Discord Developer Portal 人工配置
 

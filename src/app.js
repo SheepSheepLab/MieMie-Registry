@@ -3,6 +3,7 @@
 import { randomBytes, randomUUID, createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { fail, plain, text, submissionInput } from './validation.js';
 import { createDiscordAdapter, createGitHubAdapter } from './remote.js';
+import { createGitHubRelay } from './github-relay.js';
 const random = () => randomBytes(32).toString('base64url');
 const sha = value => createHash('sha256').update(value).digest('base64url');
 const safeEqual = (a, b) => typeof a === 'string' && typeof b === 'string' && Buffer.byteLength(a) === Buffer.byteLength(b) && timingSafeEqual(Buffer.from(a), Buffer.from(b));
@@ -15,8 +16,9 @@ async function readJSON(req) {
   for await (const chunk of req) { length += chunk.length; if (length > 16384) fail(413, 'body_too_large', '请求超过 16 KiB'); chunks.push(chunk); }
   try { const value = JSON.parse(Buffer.concat(chunks).toString('utf8')); if (!plain(value)) throw new Error(); return value; } catch { fail(400, 'invalid_json', 'JSON 无效'); }
 }
-export function createApp({ config, store, discord = createDiscordAdapter(config), github = createGitHubAdapter(), now = Date.now, rateLimit = 120 } = {}) {
+export function createApp({ config, store, discord = createDiscordAdapter(config), github = createGitHubAdapter(), githubRelay = createGitHubRelay(), now = Date.now, rateLimit = 120 } = {}) {
   const flows = new Map(), bridges = new Map(), rates = new Map(), previewCache = new Map();
+  const relayRequests = new Map();
   const tokenHash = value => createHmac('sha256', config.sessionSecret).update(value).digest('hex');
   function prune() {
     for (const map of [flows, bridges]) for (const [key, value] of map) if (value.expiresAt <= now()) map.delete(key);
@@ -64,7 +66,7 @@ export function createApp({ config, store, discord = createDiscordAdapter(config
       if (method === 'OPTIONS') { res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, OPTIONS'); res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type'); res.setHeader('Access-Control-Max-Age', '600'); res.writeHead(204); res.end(); return; }
       if (!['GET', 'POST', 'PATCH'].includes(method)) fail(405, 'method_not_allowed', '不支持此请求');
       if (method !== 'GET' && (!origin || !config.allowedOrigins.has(origin))) fail(403, 'origin_required', '写入请求必须来自已配置页面');
-      if (path === '/health' && method === 'GET') return send(res, 200, { status: 'ok', version: '0.1.0' });
+      if (path === '/health' && method === 'GET') return send(res, 200, { status: 'ok', version: '0.1.1' });
       if (path === '/' && method === 'GET') { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); res.end('<!doctype html><meta charset="utf-8"><title>MieMie Registry</title><h1>MieMie Registry</h1><p>目录和 Discord 投稿服务。请从 MieMie Hub 扩展中心连接。</p><p>投稿默认上架，不代表安全审核或作者认证。</p>'); return; }
       if (path === '/api/auth/start' && method === 'POST') {
         if (!config.clientId || !config.clientSecret) fail(503, 'oauth_not_configured', 'Registry 尚未配置 Discord OAuth');
@@ -127,6 +129,22 @@ export function createApp({ config, store, discord = createDiscordAdapter(config
         return send(res, 200, { items, page, pageSize, total, hasMore: page * pageSize < total });
       }
       if (/^\/api\/catalog\/[^/]+$/.test(path) && method === 'GET') { const row = entry(path.split('/').at(-1)); if (row.owner_status !== 'listed' || row.moderation !== 'visible') fail(404, 'not_found', '项目不可公开获取'); return send(res, 200, store.entryDTO(row)); }
+      if (path === '/api/packages/github/asset' && method === 'POST') {
+        if (requestUrl.search) fail(400, 'invalid_relay_request', '文件传输接口不接受 URL 查询参数');
+        const ip = req.socket.remoteAddress || 'unknown';
+        limit(`relay:${ip}`, 12, 60000);
+        if (relayRequests.size >= 4 || [...relayRequests.values()].filter(value => value === ip).length >= 2) fail(429, 'relay_busy', '文件传输任务过多，请稍后重试');
+        const body = await readJSON(req), controller = new AbortController(), cancel = () => controller.abort();
+        // Count again after reading a possibly delayed request body.
+        if (relayRequests.size >= 4 || [...relayRequests.values()].filter(value => value === ip).length >= 2) fail(429, 'relay_busy', '文件传输任务过多，请稍后重试');
+        relayRequests.set(controller, ip); req.once('aborted', cancel); res.once('close', cancel);
+        try {
+          const bytes = await githubRelay.read(body, { signal: controller.signal });
+          if (controller.signal.aborted || res.destroyed) return;
+          res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': bytes.length, 'Cache-Control': 'no-store' }); res.end(bytes);
+        } finally { req.off('aborted', cancel); res.off('close', cancel); controller.abort(); relayRequests.delete(controller); }
+        return;
+      }
       if (path === '/api/github/preview' && method === 'GET') { const { user } = authenticate(req); canSubmit(user); limit(`preview:${user.discord_id}`, 10, 60000); return send(res, 200, await inspect(requestUrl.searchParams.get('url'))); }
       if (path === '/api/submissions' && method === 'GET') { const { user } = authenticate(req); return send(res, 200, { items: store.listOwn(user.discord_id).map(row => store.entryDTO(row, true)) }); }
       if (path === '/api/submissions' && method === 'POST') {
@@ -189,5 +207,5 @@ export function createApp({ config, store, discord = createDiscordAdapter(config
       send(res, status, { error: { code: error.code || 'internal_error', message: status === 500 ? '服务暂时不可用' : error.message } });
     }
   };
-  return { handler, close() { flows.clear(); bridges.clear(); rates.clear(); previewCache.clear(); }, store };
+  return { handler, close() { for (const controller of relayRequests.keys()) controller.abort(); relayRequests.clear(); flows.clear(); bridges.clear(); rates.clear(); previewCache.clear(); }, store };
 }

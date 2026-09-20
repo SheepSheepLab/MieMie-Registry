@@ -1,8 +1,8 @@
 # MieMie Registry
 
-MieMie Extension Ecosystem MVP 的独立目录与 Discord 投稿服务，当前版本 **0.1.0**。软件代码 Copyright © 2026 SheepSheep，采用 [GNU GPL v3.0 or later](LICENSE)，SPDX：`GPL-3.0-or-later`。
+MieMie Extension Ecosystem MVP 的独立目录与 Discord 投稿服务，当前版本 **0.1.1**。软件代码 Copyright © 2026 SheepSheep，采用 [GNU GPL v3.0 or later](LICENSE)，SPDX：`GPL-3.0-or-later`。
 
-Registry 只保存目录元数据、Discord 投稿身份和必要管理记录。**不保存社区 Extension 软件文件，不取得社区作品所有权。** GitHub 软件由作者自己的仓库／Release 分发；Discord 项目始终跳转作者原帖。
+Registry 只持久保存目录元数据、Discord 投稿身份和必要管理记录。**不托管、缓存落盘或镜像社区 Extension 软件文件，不取得社区作品所有权。** GitHub 软件的权威来源始终是作者自己的仓库／Release；Registry 0.1.1 可按已验证 Manifest 将官方 GitHub Release 字节临时读入有界内存，校验后转发给 Hub，解决浏览器 Release Asset CORS 限制。Discord 项目始终跳转作者原帖。
 
 投稿默认上架，不代表 MieMie 安全审核、作者认证或官方推荐。作品 Author 与 Submitter 是不同字段；Discord 登录只能证明谁提交记录。
 
@@ -34,11 +34,14 @@ npm run backup
 - 「我的」投稿、编辑、下架、重新上架；下架保留数据库记录。
 - 服务端 Discord ID 白名单管理员可以隐藏、恢复、管理下架、封禁和解除封禁。普通用户无法调用管理接口。
 - GitHub 公开仓库验证和 Manifest／Release 预填；机器安装兼容性只说明格式可识别，Hub 安装前还必须重新下载并完整校验。
+- 无需 Discord 登录的受限 GitHub 文件传输接口；只接受仓库、Release ID、Asset ID，服务端验证机器元数据后只能转发该元数据或其唯一安装包。不是任意 URL 代理；不会把 Registry 标成作品文件来源。Hub 收到字节后仍独立校验 Hash、版本和身份。
 - Discord 来源只保存 `discord.com/channels/...` 原帖，不保存临时附件下载地址。
 - Icon 第一版只接收 GitHub HTTPS 图片 URL 或 Manifest 中安全相对路径；**没有文件上传接口**。不存储社区 Icon 文件。Manifest Icon → 投稿 Icon → Hub 默认图标。
 - 头像由服务端从固定 Discord CDN 获取受限 PNG 并保存到 SQLite，通过随机 URL 提供；公开 URL 不暴露 Discord Snowflake。
 
 Catalog 下架／隐藏不远程删除用户已安装的代码。已安装用户仍可使用本地版本，并直接从原作者 GitHub 检查更新；本阶段没有撤销代码或远程停用机制。
+
+仅测试 GitHub 安装下载时无需 Discord Client Secret：启动 Registry，将酒馆页面 Origin 加入 `CORS_ORIGINS`，在 Hub 扩展中心配置该 Registry 地址即可。浏览器直接读取 GitHub Asset 失败时可使用此受限传输路径；Registry 未启动、来源不获允许或文件校验失败时仍安全拒绝安装。
 
 ## 文档
 

@@ -5,6 +5,8 @@
 - 公开 DTO 字段白名单，Discord ID 不进入 Public／我的/Profile 响应；管理员受限接口才取得必要管理 ID。公开头像使用随机服务端 URL。
 - GitHub API 请求只构造固定官方域名，公开 Repo 必须匹配用户指定地址；API 重定向默认拒绝，Release Asset 重定向只接受 GitHub 官方域名；不使用第三方代理、用户 GitHub Token、任意 URL 抓取或 Registry 软件镜像。
 - Release metadata ≤64 KiB、请求 15 秒、可中止且限制实际流字节；核对 GitHub API size/digest。Hub 再次对 Package 内容、Manifest、版本、Hash 校验，Registry 兼容标签不能替代安装验证。
+- 0.1.1 的公开 Package relay 不接受任意 URL：只接受规范化公开 GitHub 仓库与两个整数 ID，独立从官方 API 找出并验证指定 Release 的 Manifest／机器元数据。只转发元数据和其声明的安装包，不能选择同一 Release 的其他附件。查询拒绝重定向；Asset 的每次重定向在抓取前检查 HTTPS、凭据、端口及固定 GitHub 官方域名，不发送 Cookie／Authorization，不读取客户端提供的 URL。
+- relay 在全部校验完成后才发送原始字节；Package 校验包括 API digest、文件及 content SHA-256、身份、版本、空用户 data 和严格宿主单脚本结构，响应前再次读取 Release 锁。最多 4 个在途操作、每 IP 2 个、每 IP 每分钟 12 次；响应大小、单请求和整操作期限均有限制，断开连接即中止。不落盘、不建立社区文件镜像，Registry 日志不得记录签名下载 URL。
 - Discord 原帖只接受固定官方 channels URL，禁止附件、Invite、非 HTTPS 或用户密码信息 URL。
 - Icon 第一版只有受限 GitHub HTTPS URL／Manifest 安全相对路径，没有上传接口，因此不接受 multipart、data URL 或任意图片字节。Discord 头像只抓取固定 CDN、最大 256 KiB、PNG MIME+signature，不回传带 Snowflake 的源地址。
 - 所有投稿文字是数据；Hub 必须使用 textContent 等安全 DOM API，不能拼接 HTML。Registry HTML 不包含投稿文字；OAuth callback 使用 CSP nonce、转义 JSON、精确 postMessage origin。
@@ -13,6 +15,8 @@
 - 数据库、.env、Secret、Session、OAuth Token 不进入 Git 和客户端。测试凭据均有 test-only / Development Fixture 标记，生产服务没有 Mock 登录路径。
 
 自动测试覆盖完整 HTTP OAuth 桥、过期、重放、Cookie/Origin/verifier、Session、所有权、Profile 同步、公开 DTO 泄漏、投稿编辑上下架、管理员、封禁、分页、搜索、来源校验、SQLite 持久化和备份，以及独立 Discord/GitHub Adapter 的错误/超时/digest/大小/版本测试。
+
+relay 另有真实本地 HTTP 接口测试与 Mock GitHub 上游：无 ACAO 的官方 Asset 重定向、Origin allowlist、匿名访问、SSRF、错误包、任意附件拒绝、Release 变化、限流／并发、期限和客户端断开。浏览器依然必须能连接已配置的 Registry；此功能不绕过浏览器本身的混合内容或本地网络访问策略。
 
 自动测试不代表真实 Discord OAuth、浏览器跨源下载、Tavern 脚本 API 或生产反向代理已经验证。没有真实 Secret 时请保留这一区分。
 

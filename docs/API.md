@@ -1,6 +1,6 @@
 # Registry API v1
 
-地址以部署的 `PUBLIC_BASE_URL` 为准。响应为 JSON；错误格式：
+地址以部署的 `PUBLIC_BASE_URL` 为准。除头像与 Package 字节接口外，响应为 JSON；错误格式：
 
 ```json
 {"error":{"code":"unauthorized","message":"请使用 Discord 登录"}}
@@ -14,6 +14,23 @@
 - `GET /api/catalog/:id` → 单条公开项目；下架或隐藏项目返回 404。
 - `GET /api/avatars/:opaqueKey` → 受限 PNG；key 为随机不透明标识。
 - `GET /health` → `{status,version}`。
+- `POST /api/packages/github/asset` → 经验证的原始文件字节，`application/octet-stream`、准确 `Content-Length`、`Cache-Control: no-store`。无需 Discord 登录、Bearer Token 或 GitHub Token；必须携带配置允许的 Origin。
+
+### 作者 GitHub 字节传输
+
+请求 JSON **只能**包含以下三个字段（Development Fixture）：
+
+```json
+{"repository":"https://github.com/Example/Fixture","releaseId":20,"assetId":30}
+```
+
+`repository` 必须是 GitHub API 返回的规范大小写的公开仓库地址，没有 `.git`、末尾斜线、查询参数或用户凭据。两个 ID 必须为正安全整数。接口不接受任何下载 URL 或额外字段。
+
+服务端从该仓库官方 API 获取指定 Release，验证其非 Draft、纯三段版本、唯一 `MieMie-Extension-update.json`、GitHub size/digest、Manifest 的仓库／身份／API／版本，以及声明的唯一 Package Asset。只能请求此元数据 Asset 或此安装包 Asset。直接仓库预览不要求已有 Catalog 投稿，但必须通过相同 Manifest 验证；普通外部项目不能利用此接口转发任意文件。
+
+Package 返回前校验完整文件 SHA-256、单脚本结构、空 `data`、内嵌构建身份、仓库与 content SHA-256；两类响应都在传输完成后重新读取 Release 并锁定 Tag、Asset ID／名称／大小／digest／状态。返回的字节与作者 Release 完全相同，Hub 仍须独立执行原有校验。
+
+元数据上限 64 KiB、Package 上限 16 MiB；查询／元数据每次最多 15 秒、Package 下载最多 60 秒、整次操作最多 90 秒。最多同时 4 个传输任务、每 IP 2 个，每 IP 每分钟 12 次；超过返回 429。客户端断开、Hub 取消或服务关闭会中止上游请求。没有持久文件缓存。错误仍为上述 JSON，可能包括 `origin_denied`、`invalid_relay_request`、`asset_not_allowed`、`digest_mismatch`、`release_changed`、`upstream_timeout`；失败响应不包含文件片段。
 
 项目示例（Development Fixture）：
 
