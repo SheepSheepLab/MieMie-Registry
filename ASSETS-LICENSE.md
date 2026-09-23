@@ -4,11 +4,11 @@ MieMie Reserved Assets Policy · Version 2.0 · Effective: 2026-09-24
 
 ## 当前没有本地保留美术资产
 
-本 Registry 项目当前不包含 MieMie / 咩咩 PNG、Logo、角色立绘、字体或其他保留独立美术许可的本地素材，因此当前没有需要从 GPL 软件许可中单独列出的本地 Reserved Assets。本文件不对本仓库目录或软件文件作概括性 GPL 排除，也不为不含保留素材的软件分发新增收费限制。
+本 Registry 项目当前不包含咩咩 / MieMie PNG、Logo、角色立绘、字体或其他保留独立美术许可的本地素材，因此当前没有需要从 GPL 软件许可中单独列出的本地 Reserved Assets。本文件不对本仓库目录或软件文件作概括性 GPL 排除，也不为不含保留素材的软件分发新增收费限制。
 
 软件代码继续采用 GNU General Public License v3.0 or later（SPDX：`GPL-3.0-or-later`），见 [LICENSE](LICENSE)。第三方可以使用、修改、Fork、再分发、商业发布并对自己的 GPL Fork 收费，前提是遵守 GPL。
 
-MieMie / 咩咩分别为英文、中文官方品牌，地位相同，来源识别及正常描述性引用规则见 [BRAND.md](BRAND.md)。代码授权不自动授予官方品牌、Logo、咩咩与小咩角色形象、角色 Icon、官方插画及指定品牌视觉资产的使用权，也不意味着可冒充官方产品；这些类别不表示 Registry 当前包含相应素材。
+咩咩 / MieMie 分别为中文、英文官方品牌，地位相同，来源识别及正常描述性引用规则见 [BRAND.md](BRAND.md)。代码授权不自动授予官方品牌、Logo、咩咩与小咩角色形象、角色 Icon、官方插画及指定品牌视觉资产的使用权，也不意味着可冒充官方产品；这些类别不表示 Registry 当前包含相应素材。
 
 ## 第三方内容与未来登记
 

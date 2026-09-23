@@ -1,6 +1,10 @@
 # MieMie Registry
 
+本目录服务属于咩咩（MieMie）开源软件与社区生态，由生态 Founder / 创始人 SheepSheep 发起和创建。SheepSheepLab 是官方 GitHub 开发、维护与发布组织／命名空间，官方项目主要通过该组织维护和发布，并欢迎社区贡献者共同参与。
+
 MieMie Extension Ecosystem MVP 的独立目录与 Discord 投稿服务，当前版本 **0.2.3**。软件代码 Copyright © 2026 SheepSheep，采用 [GNU GPL v3.0 or later](LICENSE)，SPDX：`GPL-3.0-or-later`。
+
+社区贡献者（Community Contributors）保留各自的贡献者身份；除另有说明，贡献内容的版权归相应贡献者所有。
 
 Registry 只持久保存目录元数据、Discord 投稿身份和必要管理记录。**不托管、缓存落盘或镜像社区 Extension 软件文件，不取得社区作品所有权。** GitHub 软件的权威来源始终是作者自己的仓库／Release；Registry 可按已验证 Manifest 将官方 GitHub Release 字节临时读入有界内存，校验后转发给 Hub，解决浏览器 Release Asset CORS 限制。Discord 项目始终跳转作者原帖。
 
@@ -56,7 +60,7 @@ Catalog 下架／隐藏不远程删除用户已安装的代码。已安装用户
 - [数据库、备份与迁移](docs/STORAGE.md)
 - [安全边界与自动测试](docs/SECURITY.md)
 
-软件代码依据 **GPL-3.0-or-later** 开源，包括 GPL 所允许的商业使用及收费分发。MieMie / 咩咩分别为地位相同的英文、中文官方品牌；官方品牌身份、Logo、角色形象及指定角色 Icon 不因软件代码采用 GPL 而自动获得同等授权。第三方修改版和商业 Fork 请查看 [BRAND.md](BRAND.md) 与 [ASSETS-LICENSE.md](ASSETS-LICENSE.md)。当前 Registry 没有本地 Reserved Assets，不新增素材收费限制。开发运行环境说明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+软件代码依据 **GPL-3.0-or-later** 开源，包括 GPL 所允许的商业使用及收费分发。“咩咩”与“MieMie”分别为地位同级的中文、英文官方品牌；中文语境优先写“咩咩 / MieMie”，英文、GitHub 与技术语境优先写“MieMie / 咩咩”，书写顺序不表示主次。官方品牌身份、Logo、角色形象及指定角色 Icon 不因软件代码采用 GPL 而自动获得同等授权。第三方修改版和商业 Fork 请查看 [BRAND.md](BRAND.md) 与 [ASSETS-LICENSE.md](ASSETS-LICENSE.md)。当前 Registry 没有本地 Reserved Assets，不新增素材收费限制。开发运行环境说明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
 ### Catalog 版本缓存
 
