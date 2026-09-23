@@ -11,7 +11,7 @@ MieMie Brand Policy · Version 2.0 · Effective: 2026-09-24
 - 中文语境优先使用“咩咩 / MieMie”或“咩咩（MieMie）”，例如“咩咩Hub / MieMie Hub”“咩咩酒馆 / MieMie Tavern”。
 - 英文、GitHub 与技术语境优先使用“MieMie / 咩咩”或“MieMie (咩咩)”，例如“MieMie Hub / 咩咩Hub”“MieMie Tavern / 咩咩酒馆”。
 
-上述顺序按具体段落的语言和用途选择，不要求所有场景固定同一顺序；无论书写顺序如何，两者品牌地位均同级，不产生主次关系。MieMie Ecosystem / 咩咩生态指同一生态。
+上述顺序按具体段落的语言和用途选择，不要求所有场景固定同一顺序；无论书写顺序如何，两者品牌地位均同级，不产生主次关系。咩咩生态 / MieMie Ecosystem 指同一生态。
 
 ## 创始人、官方命名空间与社区贡献者
 
