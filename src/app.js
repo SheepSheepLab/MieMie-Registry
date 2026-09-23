@@ -16,7 +16,7 @@ async function readJSON(req) {
   for await (const chunk of req) { length += chunk.length; if (length > 16384) fail(413, 'body_too_large', '请求超过 16 KiB'); chunks.push(chunk); }
   try { const value = JSON.parse(Buffer.concat(chunks).toString('utf8')); if (!plain(value)) throw new Error(); return value; } catch { fail(400, 'invalid_json', 'JSON 无效'); }
 }
-export function createApp({ config, store, discord = createDiscordAdapter(config), github = createGitHubAdapter(), githubRelay = createGitHubRelay(), now = Date.now, rateLimit = 120 } = {}) {
+export function createApp({ config, store, discord = createDiscordAdapter(config), github = createGitHubAdapter(), githubRelay = createGitHubRelay(), now = Date.now, rateLimit = 120, catalogRefreshTtlMs = 900000, catalogRefreshWaitMs = 3000, catalogRefreshBudget = 8 } = {}) {
   const flows = new Map(), bridges = new Map(), handoffs = new Map(), rates = new Map(), previewCache = new Map();
   const relayRequests = new Map();
   // OAuth access tokens exist only in process memory, bound to a Registry session.
@@ -70,6 +70,31 @@ export function createApp({ config, store, discord = createDiscordAdapter(config
     if (previewCache.size > 1000) previewCache.clear();
     previewCache.set(url, { result, until: now() + 60000 }); return result;
   }
+  const catalogRefresh = new Map();
+  let refreshWindow = now(), refreshCount = 0;
+  async function refreshCatalogRows(rows) {
+    let started = 0;
+    if (now() - refreshWindow >= 3600000) {refreshWindow = now(); refreshCount = 0;}
+    const tasks = rows.filter(row => row.source_type === 'github').map(row => {
+      const key = row.source_url;
+      let cached = catalogRefresh.get(key);
+      if (!cached || cached.until <= now()) {
+        if (++started > 4 || refreshCount >= catalogRefreshBudget) return Promise.resolve();
+        if (catalogRefresh.size >= 1000) for (const [k, v] of catalogRefresh) if (v.until <= now()) catalogRefresh.delete(k);
+        if (catalogRefresh.size >= 1000) return Promise.resolve();
+        refreshCount++;
+        const promise = inspect(key).catch(() => null);
+        cached = {promise, until: now() + catalogRefreshTtlMs}; catalogRefresh.set(key, cached);
+      }
+      return cached.promise.then(result => {
+        const previous = row.github_json ? JSON.parse(row.github_json) : null;
+        if (result && (result.compatibility === 'installable' || previous?.compatibility !== 'installable')) store.refreshGithub(row, result);
+      }).catch(() => {});
+    });
+    let timer;
+    try {await Promise.race([Promise.all(tasks), new Promise(resolve => {timer = setTimeout(resolve, catalogRefreshWaitMs);})]);}
+    finally {clearTimeout(timer);}
+  }
   function completeSession(key, bridge) {
     const user = store.getIdentity(bridge.discordId), token = random(), expiresAt = Math.min(now() + config.sessionTtlMs, bridge.credentials.expiresAt);
     if (expiresAt <= now()) fail(401, 'session_expired', 'Discord 授权已过期，请重新登录');
@@ -96,7 +121,7 @@ export function createApp({ config, store, discord = createDiscordAdapter(config
       if (method === 'OPTIONS') { res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, OPTIONS'); res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type'); res.setHeader('Access-Control-Max-Age', '600'); res.writeHead(204); res.end(); return; }
       if (!['GET', 'POST', 'PATCH'].includes(method)) fail(405, 'method_not_allowed', '不支持此请求');
       if (method !== 'GET' && (!origin || !config.allowedOrigins.has(origin))) fail(403, 'origin_required', '写入请求必须来自已配置页面');
-      if (path === '/health' && method === 'GET') return send(res, 200, { status: 'ok', version: '0.2.2' });
+      if (path === '/health' && method === 'GET') return send(res, 200, { status: 'ok', version: '0.2.3' });
       if (path === '/' && method === 'GET') { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); res.end('<!doctype html><meta charset="utf-8"><title>MieMie Registry</title><h1>MieMie Registry</h1><p>目录和 Discord 投稿服务。请从 MieMie Hub 扩展中心连接。</p><p>投稿默认上架，不代表安全审核或作者认证。</p>'); return; }
       if (path === '/api/auth/start' && method === 'POST') {
         if (!config.clientId || !config.clientSecret) fail(503, 'oauth_not_configured', 'Registry 尚未配置 Discord OAuth');
@@ -167,12 +192,16 @@ export function createApp({ config, store, discord = createDiscordAdapter(config
         const page = Number(requestUrl.searchParams.get('page') || 1), pageSize = Number(requestUrl.searchParams.get('pageSize') || 20), source = requestUrl.searchParams.get('source'), q = requestUrl.searchParams.get('q') || '';
         if (!Number.isSafeInteger(page) || page < 1 || page > 10000 || !Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > 50 || q.length > 100 || (source && !['github', 'discord'].includes(source))) fail(400, 'invalid_query', '分页或筛选参数无效');
         const permittedGuilds = await guildIds(optionalAuth(req));
-        const { rows, total } = store.listCatalog({ page, pageSize, source, q, guildIds: permittedGuilds });
+        const query = { page, pageSize, source, q, guildIds: permittedGuilds };
+        await refreshCatalogRows(store.listCatalog(query).rows);
+        const { rows, total } = store.listCatalog(query);
         const items = rows.map(row => store.entryDTO(row));
         return send(res, 200, { items, page, pageSize, total, hasMore: page * pageSize < total });
       }
       if (/^\/api\/catalog\/[^/]+$/.test(path) && method === 'GET') {
-        const permittedGuilds = await guildIds(optionalAuth(req)), row = store.getEntry(path.split('/').at(-1));
+        const permittedGuilds = await guildIds(optionalAuth(req)); let row = store.getEntry(path.split('/').at(-1));
+        if (!row || row.owner_status !== 'listed' || row.moderation !== 'visible' || (row.visibility !== 'public' && !permittedGuilds.includes(row.visibility_guild_id))) fail(404, 'not_found', '项目不存在');
+        await refreshCatalogRows([row]); row = store.getEntry(row.id);
         if (!row || row.owner_status !== 'listed' || row.moderation !== 'visible' || (row.visibility !== 'public' && !permittedGuilds.includes(row.visibility_guild_id))) fail(404, 'not_found', '项目不存在');
         return send(res, 200, store.entryDTO(row));
       }

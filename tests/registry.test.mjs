@@ -19,8 +19,8 @@ async function fixture(t, options={}) {
   const profiles = Object.fromEntries(Object.entries(IDS).map(([key,id])=>[key,{id,displayName:`Development Fixture ${key}`,username:`fixture_${key}`,avatarBytes:null}]));
   const inspections=[], membershipCalls=[];
   const memberships={A:['444444444444444444'], B:[], ADMIN:[]}; let membershipFailure=false;
-  const github = { async inspect(url) { inspections.push(url); if(options.beforeInspect) await options.beforeInspect(url); const u=new URL(url), [,owner,repo]=u.pathname.split('/'); if(repo==='missing') {const error=new Error('not public'); error.status=400;throw error;} return {owner,repo,compatibility:'external',manifest:null,release:null,reason:'fixture metadata'}; } };
-  const app=createApp({config,store,now:()=>clock,rateLimit:options.rateLimit||10000,github,discord:{authorizationUrl:state=>`https://discord.com/oauth2/authorize?state=${state}`,async exchange(code){if(!profiles[code])throw new Error('invalid OAuth code');return {profile:profiles[code],credentials:{accessToken:`test-only-discord-access-${code}`,expiresAt:clock+(options.oauthTtlMs||36000000),scopes:['identify','guilds']}};},async listGuilds(token){membershipCalls.push(token);if(options.beforeGuilds)await options.beforeGuilds();if(membershipFailure)throw new Error('private-upstream-details');return [...memberships[token.replace('test-only-discord-access-','')]];}}});
+  const github = options.github || { async inspect(url) { inspections.push(url); if(options.beforeInspect) await options.beforeInspect(url); const u=new URL(url), [,owner,repo]=u.pathname.split('/'); if(repo==='missing') {const error=new Error('not public'); error.status=400;throw error;} return {owner,repo,compatibility:'external',manifest:null,release:null,reason:'fixture metadata'}; } };
+  const app=createApp({config,store,...options.app,now:()=>clock,rateLimit:options.rateLimit||10000,github,discord:{authorizationUrl:state=>`https://discord.com/oauth2/authorize?state=${state}`,async exchange(code){if(!profiles[code])throw new Error('invalid OAuth code');return {profile:profiles[code],credentials:{accessToken:`test-only-discord-access-${code}`,expiresAt:clock+(options.oauthTtlMs||36000000),scopes:['identify','guilds']}};},async listGuilds(token){membershipCalls.push(token);if(options.beforeGuilds)await options.beforeGuilds();if(membershipFailure)throw new Error('private-upstream-details');return [...memberships[token.replace('test-only-discord-access-','')]];}}});
   const server=createServer(app.handler); await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve)); const base=`http://127.0.0.1:${server.address().port}`;
   t.after(async()=>{await new Promise(resolve=>server.close(resolve));app.close();store.close();});
   async function req(path, {method='GET',body,token,origin=ORIGIN,headers={}}={}) {
@@ -138,4 +138,32 @@ test('handoff deadlines, callback failure, missing Origin, and credential-free C
  f.advance(300001);assert.equal((await f.req('/api/auth/complete',{method:'POST',body})).status,400);
  const another=await f.begin();await f.callback(another);f.advance(60001);
  assert.equal((await f.req('/api/auth/complete',{method:'POST',body:{requestId:another.requestId,codeVerifier:another.verifier}})).status,400);
+});
+
+test('active GitHub submission refreshes Release cache after TTL without resubmission; ACL and owner untouched',async t=>{
+ let version='1.1.0', calls=0, fail=false;
+ const f=await fixture(t,{app:{catalogRefreshTtlMs:60000},github:{async inspect(){calls++;if(fail)throw Error('upstream unavailable');return {compatibility:'installable',manifest:{id:'fixture.polisher',version},release:{version,tag:'v'+version}};}}});
+ const a=await f.login('A');const made=await f.req('/api/submissions',{method:'POST',token:a.token,body:submission()});assert.equal(made.status,201);const id=made.data.id;
+ assert.equal((await f.req('/api/catalog')).data.items[0].version,'1.1.0');const before=f.store.getEntry(id);
+ version='1.1.1';f.advance(60001);
+ const newer=await f.req('/api/catalog');assert.equal(newer.data.items[0].version,'1.1.1');assert.equal(newer.data.total,1);
+ const after=f.store.getEntry(id);for(const key of Object.keys(before).filter(k=>k!=='github_json'))assert.deepEqual(after[key],before[key]);
+ const count=calls;await f.req('/api/catalog/'+id);assert.equal(calls,count);
+ fail=true;f.advance(60001);assert.equal((await f.req('/api/catalog')).data.items[0].version,'1.1.1');
+ await f.req('/api/submissions/'+id+'/status',{method:'POST',token:a.token,body:{status:'unlisted'}});f.advance(60001);const last=calls;
+ assert.equal((await f.req('/api/catalog')).data.total,0);assert.equal((await f.req('/api/catalog/'+id)).status,404);assert.equal(calls,last);
+});
+test('late GitHub cache write cannot overwrite a source edit',async t=>{
+ const f=await fixture(t),a=await f.login('A');const made=await f.req('/api/submissions',{method:'POST',token:a.token,body:submission()});const before=f.store.getEntry(made.data.id);
+ await f.req('/api/submissions/'+made.data.id,{method:'PATCH',token:a.token,body:{sourceUrl:'https://github.com/example/new-repo'}});
+ f.store.refreshGithub(before,{release:{version:'99.0.0'}});assert.notEqual(JSON.parse(f.store.getEntry(made.data.id).github_json).release?.version,'99.0.0');
+});
+
+test('automatic Catalog refresh has a global budget and invalid releases retain last validated cache',async t=>{
+ let calls=0,invalid=false;
+ const f=await fixture(t,{app:{catalogRefreshBudget:1,catalogRefreshTtlMs:60000},github:{async inspect(){calls++;return invalid?{compatibility:'external',manifest:null,release:{version:'2.0.0'}}:{compatibility:'installable',manifest:{id:'fixture.package',version:'1.1.0'},release:{version:'1.1.0'}};}}});
+ const a=await f.login('A');await f.req('/api/submissions',{method:'POST',token:a.token,body:submission()});
+ await f.req('/api/catalog');assert.equal(calls,1);invalid=true;f.advance(60001);
+ assert.equal((await f.req('/api/catalog')).data.items[0].version,'1.1.0');assert.equal(calls,1);
+ f.advance(3600000);assert.equal((await f.req('/api/catalog')).data.items[0].version,'1.1.0');assert.equal(calls,2);
 });

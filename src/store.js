@@ -80,9 +80,11 @@ export function openStore(path) {
   function updateSubmission({id,input,github,time}) {
     db.prepare('UPDATE submissions SET name=?,description=?,author=?,source_type=?,source_url=?,icon=?,tags_json=?,github_json=?,updated_at=?,visibility=?,visibility_guild_id=?,visibility_source_url=?,discord_json=? WHERE id=?').run(input.name,input.description,input.author,input.sourceType,input.sourceUrl,input.icon,JSON.stringify(input.tags),github?JSON.stringify(github):null,time,input.visibility,input.visibilityGuildId,input.visibilitySourceUrl,input.discord?JSON.stringify(input.discord):null,id);
   }
+  // Cache refresh must never overwrite edits, ownership, ACL or moderation.
+  const refreshGithub = (row, github) => db.prepare("UPDATE submissions SET github_json=? WHERE id=? AND source_type='github' AND source_url=? AND github_json IS ?").run(JSON.stringify(github),row.id,row.source_url,row.github_json);
   const setOwnerStatus=(id,status,time)=>db.prepare('UPDATE submissions SET owner_status=?,updated_at=? WHERE id=?').run(status,time,id);
   function listAdmin(page) { return {total:db.prepare('SELECT count(*) AS n FROM submissions').get().n,rows:db.prepare('SELECT * FROM submissions ORDER BY created_at DESC,id LIMIT 50 OFFSET ?').all((page-1)*50)}; }
   const setModeration=(id,status,reason,time)=>db.prepare('UPDATE submissions SET moderation=?,moderation_reason=?,updated_at=? WHERE id=?').run(status,reason,time,id);
   const setBanned=(id,banned)=>db.prepare('UPDATE identities SET banned=? WHERE discord_id=?').run(banned?1:0,id);
-  return { db, getIdentity, upsertIdentity, profileDTO, entryDTO, audit, transaction,sessionByHash,createSession,deleteSession,expireSessions,getEntry,sourceDuplicate,countOwn,listOwn,getAvatar,listCatalog,insertSubmission,updateSubmission,setOwnerStatus,listAdmin,setModeration,setBanned,close:()=>db.close(),backup:destination=>backup(db,destination) };
+  return { db, getIdentity, upsertIdentity, profileDTO, entryDTO, audit, transaction,sessionByHash,createSession,deleteSession,expireSessions,getEntry,sourceDuplicate,countOwn,listOwn,getAvatar,listCatalog,insertSubmission,updateSubmission,refreshGithub,setOwnerStatus,listAdmin,setModeration,setBanned,close:()=>db.close(),backup:destination=>backup(db,destination) };
 }
