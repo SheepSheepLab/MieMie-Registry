@@ -56,7 +56,7 @@ Catalog 下架／隐藏不远程删除用户已安装的代码。已安装用户
 - [数据库、备份与迁移](docs/STORAGE.md)
 - [安全边界与自动测试](docs/SECURITY.md)
 
-MieMie / 咩咩品牌身份遵循 [BRAND.md](BRAND.md)，不得冒充 SheepSheep 官方版本。当前 Registry 不包含 Logo／角色 PNG；见 [素材范围](ASSETS-LICENSE.md)。品牌说明不向 GPL 软件代码增加商业使用限制。开发运行环境说明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+软件代码依据 **GPL-3.0-or-later** 开源，包括 GPL 所允许的商业使用及收费分发。MieMie / 咩咩分别为地位相同的英文、中文官方品牌；官方品牌身份、Logo、角色形象及指定角色 Icon 不因软件代码采用 GPL 而自动获得同等授权。第三方修改版和商业 Fork 请查看 [BRAND.md](BRAND.md) 与 [ASSETS-LICENSE.md](ASSETS-LICENSE.md)。当前 Registry 没有本地 Reserved Assets，不新增素材收费限制。开发运行环境说明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
 ### Catalog 版本缓存
 
