@@ -106,3 +106,36 @@ test('v1 SQLite migration preserves all data and changes duplicate scope without
   db.prepare('INSERT INTO audit VALUES(?,?,?,?,?,?)').run(1,IDS.A,'create','legacy','reason',100);
   const original=db.prepare('SELECT * FROM submissions').get();db.close();const migrated=openStore(path);try{assert.equal(migrated.db.prepare('PRAGMA user_version').get().user_version,2);const row=migrated.getEntry('legacy');for(const[key,value]of Object.entries(original))assert.equal(row[key],value);assert.equal(row.visibility,'public');assert.equal(migrated.getIdentity(IDS.A).banned,1);assert.equal(migrated.db.prepare('SELECT count(*) AS n FROM audit').get().n,1);assert.equal(migrated.listCatalog({page:1,pageSize:20}).total,0);migrated.upsertIdentity({id:IDS.B,displayName:'B',username:'b',avatarBytes:null},300);const input={...submission({sourceUrl:original.source_url}),icon:null};migrated.insertSubmission({id:'other-owner',ownerId:IDS.B,input,github:null,time:300});assert.equal(migrated.countOwn(IDS.B),1);}finally{migrated.close();}
 });
+
+test('PKCE handoff completes without opener, messages, or third-party cookies and confirms current user',async t=>{
+ const f=await fixture(t),flow=await f.begin();
+ const complete=(overrides={})=>f.req('/api/auth/complete',{method:'POST',body:{requestId:flow.requestId,codeVerifier:flow.verifier},...overrides});
+ const pending=await complete();assert.equal(pending.status,202);assert.deepEqual(pending.data,{status:'pending'});
+ assert.equal((await complete({origin:'http://127.0.0.1:8000'})).status,400);
+ assert.equal((await complete({body:{requestId:flow.requestId,codeVerifier:'x'.repeat(43)}})).status,400);
+ assert.equal((await complete({body:{requestId:'z'.repeat(43),codeVerifier:flow.verifier}})).status,400);
+ const callback=await f.callback(flow);assert.equal(callback.status,200);
+ const result=await complete();assert.equal(result.status,200);assert.equal(result.data.profile.displayName,'Development Fixture A');
+ assert.doesNotMatch(JSON.stringify(result.data),new RegExp(IDS.A+'|test-only-discord-access'));
+ assert.equal((await f.req('/api/me',{token:result.data.token})).status,200);
+ assert.equal((await complete()).status,400);
+ const bridge=JSON.parse(callback.data.match(/postMessage\((\{.*?\}),/)[1]);
+ assert.equal((await f.req('/api/auth/exchange',{method:'POST',body:{...bridge,codeVerifier:flow.verifier}})).status,400);
+});
+test('legacy exchange consumes polling handoff too; concurrent completions create exactly one session',async t=>{
+ const f=await fixture(t),old=await f.login();
+ assert.equal((await f.req('/api/auth/complete',{method:'POST',body:{requestId:old.flow.requestId,codeVerifier:old.flow.verifier}})).status,400);
+ const flow=await f.begin();await f.callback(flow);
+ const results=await Promise.all([1,2].map(()=>f.req('/api/auth/complete',{method:'POST',body:{requestId:flow.requestId,codeVerifier:flow.verifier}})));
+ assert.deepEqual(results.map(x=>x.status).sort(),[200,400]);assert.equal(f.store.db.prepare('SELECT count(*) AS n FROM sessions').get().n,2);
+});
+test('handoff deadlines, callback failure, missing Origin, and credential-free CORS fail safely',async t=>{
+ const f=await fixture(t),flow=await f.begin();
+ const body={requestId:flow.requestId,codeVerifier:flow.verifier};
+ assert.equal((await f.req('/api/auth/complete',{method:'POST',origin:null,body})).status,403);
+ const preflight=await f.req('/api/auth/complete',{method:'OPTIONS'});assert.equal(preflight.status,204);
+ assert.equal(preflight.headers.get('access-control-allow-credentials'),null);assert.match(preflight.headers.get('access-control-allow-headers'),/Authorization/);
+ f.advance(300001);assert.equal((await f.req('/api/auth/complete',{method:'POST',body})).status,400);
+ const another=await f.begin();await f.callback(another);f.advance(60001);
+ assert.equal((await f.req('/api/auth/complete',{method:'POST',body:{requestId:another.requestId,codeVerifier:another.verifier}})).status,400);
+});

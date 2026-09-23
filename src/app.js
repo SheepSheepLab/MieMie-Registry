@@ -17,14 +17,14 @@ async function readJSON(req) {
   try { const value = JSON.parse(Buffer.concat(chunks).toString('utf8')); if (!plain(value)) throw new Error(); return value; } catch { fail(400, 'invalid_json', 'JSON 无效'); }
 }
 export function createApp({ config, store, discord = createDiscordAdapter(config), github = createGitHubAdapter(), githubRelay = createGitHubRelay(), now = Date.now, rateLimit = 120 } = {}) {
-  const flows = new Map(), bridges = new Map(), rates = new Map(), previewCache = new Map();
+  const flows = new Map(), bridges = new Map(), handoffs = new Map(), rates = new Map(), previewCache = new Map();
   const relayRequests = new Map();
   // OAuth access tokens exist only in process memory, bound to a Registry session.
   // Restart, logout or expiry loses access and requires a fresh Discord login.
   const sessionCredentials = new Map();
   const tokenHash = value => createHmac('sha256', config.sessionSecret).update(value).digest('hex');
   function prune() {
-    for (const map of [flows, bridges]) for (const [key, value] of map) if (value.expiresAt <= now()) map.delete(key);
+    for (const map of [flows, bridges, handoffs]) for (const [key, value] of map) if (value.expiresAt <= now()) map.delete(key);
     for (const [key, value] of rates) if (value.until <= now()) rates.delete(key);
     for (const [key, value] of sessionCredentials) if (value.expiresAt <= now()) sessionCredentials.delete(key);
     store.expireSessions(now());
@@ -70,6 +70,16 @@ export function createApp({ config, store, discord = createDiscordAdapter(config
     if (previewCache.size > 1000) previewCache.clear();
     previewCache.set(url, { result, until: now() + 60000 }); return result;
   }
+  function completeSession(key, bridge) {
+    const user = store.getIdentity(bridge.discordId), token = random(), expiresAt = Math.min(now() + config.sessionTtlMs, bridge.credentials.expiresAt);
+    if (expiresAt <= now()) fail(401, 'session_expired', 'Discord 授权已过期，请重新登录');
+    if (sessionCredentials.size >= 10000) fail(503, 'busy', '登录会话过多');
+    store.createSession(tokenHash(token), user.discord_id, bridge.origin, expiresAt);
+    sessionCredentials.set(tokenHash(token), { accessToken: bridge.credentials.accessToken, expiresAt });
+    // Both delivery paths consume the same one-use result, synchronously.
+    bridges.delete(key); handoffs.delete(bridge.requestId);
+    return { token, expiresAt: new Date(expiresAt).toISOString(), profile: store.profileDTO(user), isAdmin: config.adminIds.has(user.discord_id), canSubmit: !user.banned };
+  }
   function send(res, status, value) { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(value)); }
   const handler = async (req, res) => {
     res.setHeader('X-Content-Type-Options', 'nosniff'); res.setHeader('Referrer-Policy', 'no-referrer'); res.setHeader('Cache-Control', 'no-store');
@@ -86,16 +96,17 @@ export function createApp({ config, store, discord = createDiscordAdapter(config
       if (method === 'OPTIONS') { res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, OPTIONS'); res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type'); res.setHeader('Access-Control-Max-Age', '600'); res.writeHead(204); res.end(); return; }
       if (!['GET', 'POST', 'PATCH'].includes(method)) fail(405, 'method_not_allowed', '不支持此请求');
       if (method !== 'GET' && (!origin || !config.allowedOrigins.has(origin))) fail(403, 'origin_required', '写入请求必须来自已配置页面');
-      if (path === '/health' && method === 'GET') return send(res, 200, { status: 'ok', version: '0.2.1' });
+      if (path === '/health' && method === 'GET') return send(res, 200, { status: 'ok', version: '0.2.2' });
       if (path === '/' && method === 'GET') { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); res.end('<!doctype html><meta charset="utf-8"><title>MieMie Registry</title><h1>MieMie Registry</h1><p>目录和 Discord 投稿服务。请从 MieMie Hub 扩展中心连接。</p><p>投稿默认上架，不代表安全审核或作者认证。</p>'); return; }
       if (path === '/api/auth/start' && method === 'POST') {
         if (!config.clientId || !config.clientSecret) fail(503, 'oauth_not_configured', 'Registry 尚未配置 Discord OAuth');
         limit(`auth:${req.socket.remoteAddress}`, 10, 600000);
         const body = await readJSON(req);
         if (body.returnOrigin !== origin || !/^[A-Za-z0-9_-]{43}$/.test(body.codeChallenge || '')) fail(400, 'invalid_auth_request', 'OAuth 来源或校验码无效');
-        if (flows.size >= 1000) fail(503, 'busy', '登录请求过多');
+        if (flows.size >= 1000 || handoffs.size >= 1000) fail(503, 'busy', '登录请求过多');
         const requestId = random(); flows.set(requestId, { requestId, origin, challenge: body.codeChallenge, expiresAt: now() + 300000, started: false });
-        return send(res, 200, { authorizationUrl: `${config.publicBaseUrl}/api/auth/authorize?requestId=${requestId}`, requestId });
+        handoffs.set(requestId, { origin, challenge: body.codeChallenge, expiresAt: now() + 300000 });
+        return send(res, 200, { authorizationUrl: `${config.publicBaseUrl}/api/auth/authorize?requestId=${requestId}`, requestId, handoff: 'poll-v1' });
       }
       if (path === '/api/auth/authorize' && method === 'GET') {
         const flow = flows.get(requestUrl.searchParams.get('requestId'));
@@ -120,23 +131,30 @@ export function createApp({ config, store, discord = createDiscordAdapter(config
         store.upsertIdentity(profile, now());
         if (bridges.size >= 1000) fail(503, 'busy', '登录确认请求过多');
         const bridge = random(); bridges.set(sha(bridge), { discordId: profile.id, credentials, origin: flow.origin, challenge: flow.challenge, requestId: flow.requestId, expiresAt: now() + 60000 });
+        const handoff = handoffs.get(flow.requestId);
+        if (handoff) { handoff.bridgeKey = sha(bridge); handoff.expiresAt = now() + 60000; }
         const nonce = random();
         res.setHeader('Content-Security-Policy', `default-src 'none'; script-src 'nonce-${nonce}'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'`);
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-        res.end(`<!doctype html><meta charset="utf-8"><title>MieMie Discord 登录</title><p>登录完成，请返回 MieMie Hub。若原窗口已关闭，请重新登录。</p><script nonce="${nonce}">if(window.opener){window.opener.postMessage(${jsonScript({ type: 'miemie-registry-auth', code: bridge, requestId: flow.requestId })},${jsonScript(flow.origin)});}history.replaceState(null,'','/api/auth/callback');</script>`); return;
+        res.end(`<!doctype html><meta charset="utf-8"><title>MieMie Discord 登录</title><p>登录完成，请返回 MieMie Hub。若原窗口已关闭，请重新登录。</p><script nonce="${nonce}">try{if(window.opener){window.opener.postMessage(${jsonScript({ type: 'miemie-registry-auth', code: bridge, requestId: flow.requestId })},${jsonScript(flow.origin)});}}catch{}history.replaceState(null,'','/api/auth/callback');</script>`); return;
+      }
+      if (path === '/api/auth/complete' && method === 'POST') {
+        const body = await readJSON(req);
+        if (!/^[A-Za-z0-9_-]{43}$/.test(body.requestId || '') || !/^[A-Za-z0-9._~-]{43,128}$/.test(body.codeVerifier || '')) fail(400, 'invalid_handoff', '登录交接无效或已过期，请重新登录');
+        const handoff = handoffs.get(body.requestId);
+        if (!handoff || handoff.expiresAt <= now() || handoff.origin !== origin || !safeEqual(handoff.challenge, sha(body.codeVerifier))) fail(400, 'invalid_handoff', '登录交接无效或已过期，请重新登录');
+        limit(`handoff:${body.requestId}`, 40, 60000);
+        if (!handoff.bridgeKey) return send(res, 202, { status: 'pending' });
+        const bridge = bridges.get(handoff.bridgeKey);
+        if (!bridge || bridge.expiresAt <= now()) fail(400, 'invalid_handoff', '登录交接无效或已过期，请重新登录');
+        return send(res, 200, completeSession(handoff.bridgeKey, bridge));
       }
       if (path === '/api/auth/exchange' && method === 'POST') {
         const body = await readJSON(req);
         if (!/^[A-Za-z0-9_-]{43}$/.test(body.code || '') || !/^[A-Za-z0-9._~-]{43,128}$/.test(body.codeVerifier || '')) fail(400, 'invalid_bridge', '登录确认无效');
         const key = sha(body.code), bridge = bridges.get(key);
         if (!bridge || bridge.expiresAt <= now() || bridge.origin !== origin || bridge.requestId !== body.requestId || !safeEqual(bridge.challenge, sha(body.codeVerifier))) fail(400, 'invalid_bridge', '登录确认无效或已使用');
-        bridges.delete(key);
-        const user = store.getIdentity(bridge.discordId), token = random(), expiresAt = Math.min(now() + config.sessionTtlMs, bridge.credentials.expiresAt);
-        if (expiresAt <= now()) fail(401, 'session_expired', 'Discord 授权已过期，请重新登录');
-        if (sessionCredentials.size >= 10000) fail(503, 'busy', '登录会话过多');
-        store.createSession(tokenHash(token), user.discord_id, origin, expiresAt);
-        sessionCredentials.set(tokenHash(token), { accessToken: bridge.credentials.accessToken, expiresAt });
-        return send(res, 200, { token, expiresAt: new Date(expiresAt).toISOString(), profile: store.profileDTO(user), isAdmin: config.adminIds.has(user.discord_id), canSubmit: !user.banned });
+        return send(res, 200, completeSession(key, bridge));
       }
       if (path === '/api/me' && method === 'GET') { const auth = authenticate(req); return send(res, 200, { profile: store.profileDTO(auth.user), isAdmin: auth.isAdmin, canSubmit: !auth.user.banned }); }
       if (path === '/api/auth/logout' && method === 'POST') { const auth = authenticate(req); store.deleteSession(auth.session.hash); sessionCredentials.delete(auth.session.hash); return send(res, 200, { ok: true }); }
@@ -241,5 +259,5 @@ export function createApp({ config, store, discord = createDiscordAdapter(config
       send(res, status, { error: { code: error.code || 'internal_error', message: status === 500 ? '服务暂时不可用' : error.message, ...(error.code === 'github_rate_limited' ? {retryAt: error.retryAt} : {}) } });
     }
   };
-  return { handler, close() { for (const controller of relayRequests.keys()) controller.abort(); relayRequests.clear(); sessionCredentials.clear(); flows.clear(); bridges.clear(); rates.clear(); previewCache.clear(); }, store };
+  return { handler, close() { for (const controller of relayRequests.keys()) controller.abort(); relayRequests.clear(); sessionCredentials.clear(); flows.clear(); bridges.clear(); handoffs.clear(); rates.clear(); previewCache.clear(); }, store };
 }

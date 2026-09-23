@@ -34,3 +34,9 @@ Catalog 列表、搜索、总数和单项详情共用服务端 ACL。未知条�
 OAuth access token 仅服务端内存保存，绑定具体会话；不写数据库、日志、浏览器或发布包，也不保存 refresh token。会话结束或进程重启后清理，需重新授权登录。数据库只持久保存身份、投稿、ACL 与必要审计记录。Hub 收到的短期 Registry 会话 Token 不是 Discord Token，仅在当前 iframe 内存使用。
 
 公开 GitHub 软件包始终公开可从作者仓库获得；目录 ACL 不声称隐藏互联网上已公开的源仓库或撤销已安装代码。Discord Guild 成员判断也不表示用户拥有某个私有频道的阅读权限。
+
+## 0.2.2 登录交接修复
+
+`poll-v1` 将结果领取绑定到开始登录时的 Origin、随机 requestId 和 SHA-256 verifier。无法获得 verifier 的页面不能查询登录进度、领取身份或抢先消耗结果。结果只在服务器内存中暂存，最长 60 秒；消息交接与主动领取共享一次性消费。返回 Hub 的凭证仍为 Registry 内存会话，Discord OAuth Token 始终留在服务器。
+
+弹窗 postMessage 是可选唤醒提示，不再是单点依赖；Cookie 仍仅用于顶层回调的 CSRF 绑定，禁止通过放宽 SameSite、开放通配 Origin 或取消 verifier 校验解决跨站登录问题。页面关闭/切换服务/退出会丢弃结果；服务重启后必须重新登录。

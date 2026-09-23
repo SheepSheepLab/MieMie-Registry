@@ -76,10 +76,10 @@ const anonymous = async path => {
   assert.equal(response.headers.get('access-control-allow-origin'), ORIGIN); return {status: response.status, value: await response.json()};
 };
 function browserClient(who = 'A') {
-  const listeners = new Set(); let account = who;
+  const listeners = new Set(), focusListeners = new Set(); let account = who;
   const host = {location: {origin: ORIGIN}, btoa: value => Buffer.from(value, 'binary').toString('base64'),
-    addEventListener(type, listener) {assert.equal(type, 'message'); listeners.add(listener);},
-    removeEventListener(type, listener) {assert.equal(type, 'message'); listeners.delete(listener);},
+    addEventListener(type, listener) {assert.ok(['message','focus'].includes(type)); (type === 'message' ? listeners : focusListeners).add(listener);},
+    removeEventListener(type, listener) {assert.ok(['message','focus'].includes(type)); (type === 'message' ? listeners : focusListeners).delete(listener);},
     open(url) {
       assert.equal(url, 'about:blank');
       const popup = {closed: false, close() {this.closed = true;}}; popups.push(popup);
@@ -118,7 +118,7 @@ function browserClient(who = 'A') {
     },
   });
   client.setBase(base); clients.push(client);
-  return {client, setAccount: value => {account = value;}, listenerCount: () => listeners.size};
+  return {client, setAccount: value => {account = value;}, listenerCount: () => listeners.size + focusListeners.size};
 }
 
 try {
@@ -131,9 +131,9 @@ try {
   await record('actual Hub login executes OAuth cookie, state, callback source and PKCE exchange over HTTP', async () => {
     const result = await a.client.login(); assert.equal(result.profile.displayName, profiles.A.displayName); assert.equal(result.isAdmin, false);
     assert.equal(a.listenerCount(), 0); assert.ok(popups.at(-1).closed); assert.equal(oauthErrors.length, 0);
-    const exchange = requests.find(item => item.path === '/api/auth/exchange'); assert.ok(exchange);
+    const exchange = requests.find(item => item.path === '/api/auth/complete'); assert.ok(exchange);
     const body = JSON.parse(exchange.body); assert.match(body.codeVerifier, /^[A-Za-z0-9_-]{43}$/); assert.equal(exchange.hasAuthorization, false);
-    await assert.rejects(a.client.api('/api/auth/exchange', {method: 'POST', body}), /无效|使用/);
+    await assert.rejects(a.client.api('/api/auth/complete', {method: 'POST', body}), /无效|使用/);
   });
   await record('GitHub preview and GitHub/Discord create use the same routes and payload shapes as Hub', async () => {
     const preview = await a.client.api('/api/github/preview?url=' + encodeURIComponent(submit({}).sourceUrl), {authenticated: true});

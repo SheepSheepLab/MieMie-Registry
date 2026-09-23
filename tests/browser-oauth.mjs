@@ -12,11 +12,14 @@ import {openStore} from '../src/store.js';
 const flags = new Map();
 for (let i = 2; i < process.argv.length; i += 2) {
   const [key, value] = process.argv.slice(i, i + 2);
-  if (!['--hub', '--sha256', '--auto-consent'].includes(key) || !value || flags.has(key)) throw Error('Usage: node tests/browser-oauth.mjs --hub <built Hub JSON> --sha256 <locked SHA-256>');
+  if (!['--hub', '--sha256', '--auto-consent', '--detach-opener', '--iframe', '--sandbox'].includes(key) || !value || flags.has(key)) throw Error('Usage: node tests/browser-oauth.mjs --hub <built Hub JSON> --sha256 <locked SHA-256>');
   flags.set(key, value);
 }
 assert.ok(flags.has('--hub') && /^[a-f0-9]{64}$/.test(flags.get('--sha256') || ''), 'Explicit Hub artifact and SHA-256 are required');
 if (flags.has('--auto-consent')) assert.equal(flags.get('--auto-consent'), 'true');
+const detachOpener = flags.get('--detach-opener') === 'true';
+const sandboxMode = flags.get('--sandbox') === 'true';
+const iframeMode = flags.get('--iframe') === 'true';
 const autoConsent = flags.get('--auto-consent') === 'true';
 const bytes = await readFile(flags.get('--hub'));
 assert.equal(createHash('sha256').update(bytes).digest('hex'), flags.get('--sha256'), 'Hub artifact differs from the locked SHA-256');
@@ -53,7 +56,7 @@ const registryServer = createServer((req, res) => {
   if (url.pathname === '/__test/consent') {
     const state = url.searchParams.get('state');
     if (!/^[A-Za-z0-9_-]{43}$/.test(state || '')) {res.writeHead(400); res.end('Invalid fixture state'); return;}
-    res.writeHead(200, {'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer'});
+    res.writeHead(200, {'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer', ...(detachOpener ? {'Cross-Origin-Opener-Policy':'same-origin'} : {})});
     res.end((autoConsent ? '<meta http-equiv="refresh" content="0;url=/api/auth/callback?code=fixture-approved-code&amp;state=' + state + '">' : '') + '<!doctype html><meta charset="utf-8"><title>Development Fixture consent</title><h1>Development Fixture / Mock Discord</h1><p>This is a local browser test, not Discord. No real account or credentials are involved.</p><a href="/api/auth/callback?code=fixture-approved-code&amp;state=' + state + '">Approve fixture login</a>');
     return;
   }
@@ -71,7 +74,7 @@ const list=document.querySelector('#results'), status=document.querySelector('#s
 const checks=[], requests=[];
 function assert(value,message){if(!value)throw Error(message);}
 async function check(name,fn){await fn();checks.push({name,passed:true});const li=document.createElement('li');li.textContent='PASS — '+name;li.className='pass';list.append(li);}
-const client=createRegistryClient({host:window,crypto:window.crypto,timeoutMs:10000,loginTimeoutMs:120000,fetch:async(url,options)=>{
+const client=createRegistryClient({host:window.parent,crypto:window.crypto,timeoutMs:10000,loginTimeoutMs:120000,fetch:async(url,options)=>{
   assert(new URL(url).origin===BASE,'Registry credentials escaped the configured origin');
   assert(options.credentials==='omit'&&options.mode==='cors'&&options.redirect==='error','Client transport policy changed');
   requests.push({path:new URL(url).pathname,authorization:Boolean(options.headers.Authorization)});
@@ -82,10 +85,10 @@ const catalog=()=>client.api('/api/catalog',{authenticated:'optional'});
 const anonymous=async path=>{const response=await fetch(BASE+path,{credentials:'omit',mode:'cors',redirect:'error'});return {status:response.status,body:await response.json()};};
 async function execute(login){
  let item;
- await check('Popup login uses real callback cookie, postMessage and bridge exchange',async()=>{
+ await check('Popup login confirms current user without depending on opener or third-party cookies',async()=>{
   const identity=await login;assert(identity.profile.displayName==='Development Fixture Member','Profile mismatch');
   assert(!JSON.stringify(identity).includes(USER)&&!JSON.stringify(identity).includes('fixture-only-discord-access-token'),'Private identity leaked');
-  assert(requests.some(r=>r.path==='/api/auth/exchange'&&!r.authorization),'Expected bridge request missing');
+  assert(requests.some(r=>r.path==='/api/auth/complete'&&!r.authorization),'Expected PKCE completion request missing');
  });
  await check('Active submission alone creates the Guild-restricted Catalog entry',async()=>{
   assert((await catalog()).total===0,'Fixture catalog must start empty');
@@ -128,12 +131,13 @@ async function execute(login){
  document.title='PASS '+checks.length+'/'+checks.length+' MieMie browser OAuth fixture';status.textContent=document.title;
  await fetch('/__test/result',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({passed:true,checks})});
 }
-button.onclick=()=>{button.disabled=true;status.textContent='Approve the Development Fixture popup. No real Discord login is used.';const login=client.login();void execute(login).catch(async error=>{client.dispose();const li=document.createElement('li');li.className='fail';li.textContent='FAIL — '+error.message;list.append(li);document.title='FAIL MieMie browser OAuth fixture';status.textContent=document.title;await fetch('/__test/result',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({passed:false,error:error.message,checks})});});};
+button.onclick=()=>{button.disabled=true;status.textContent='Approve the Development Fixture popup. No real Discord login is used.';const login=client.login();void execute(login).catch(async error=>{client.dispose();const li=document.createElement('li');li.className='fail';li.textContent='FAIL — '+error.message;list.append(li);document.title='FAIL MieMie browser OAuth fixture';status.textContent=document.title;await fetch('/__test/result',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({passed:false,error:error.message,stack:error.stack,requests,checks})});});};
 </script>`;
 const browserServer = createServer(async (req, res) => {
   const path = new URL(req.url, 'http://localhost').pathname;
+  if (req.method === 'GET' && path === '/' && iframeMode) {res.writeHead(200, {'Content-Type':'text/html'});res.end('<!doctype html><title>Development Fixture · Tavern iframe</title><iframe src="/hub-frame" style="width:100%;height:95vh" '+(sandboxMode ? 'sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox"' : '')+'></iframe>');return;}
   res.setHeader('Cache-Control', 'no-store'); res.setHeader('X-Content-Type-Options', 'nosniff');
-  if (req.method === 'GET' && path === '/') {res.writeHead(200, {'Content-Type':'text/html; charset=utf-8'});res.end(page());return;}
+  if (req.method === 'GET' && ['/','/hub-frame'].includes(path)) {res.writeHead(200, {'Content-Type':'text/html; charset=utf-8'});res.end(page());return;}
   if (req.method === 'GET' && path === '/locked-hub-client.js') {res.writeHead(200, {'Content-Type':'text/javascript; charset=utf-8'});res.end(clientSource);return;}
   if (req.method === 'GET' && path === '/__test/result') {res.writeHead(200, {'Content-Type':'application/json'});res.end(JSON.stringify(completed ?? {pending:true}));return;}
   if (req.method === 'POST' && ['/__test/membership','/__test/result'].includes(path) && req.headers.origin === browserBase && req.headers['content-type'] === 'application/json') {
@@ -141,7 +145,7 @@ const browserServer = createServer(async (req, res) => {
     try {
       const value=JSON.parse(body);
       if(path==='/__test/membership'){assert.equal(typeof value.member,'boolean');isMember=value.member;}
-      else {assert.equal(typeof value.passed,'boolean');completed={fixture:'Development Fixture / Test Data',hubVersion:build.version,hubArtifactSha256:flags.get('--sha256'),...value};console.log(JSON.stringify(completed));}
+      else {assert.equal(typeof value.passed,'boolean');completed={fixture:'Development Fixture / Test Data',hubVersion:build.version,hubArtifactSha256:flags.get('--sha256'),detachOpener,iframeMode,sandboxMode,...value};console.log(JSON.stringify(completed));}
       res.writeHead(200,{'Content-Type':'application/json'});res.end('{"ok":true}');
     }catch{res.writeHead(400);res.end('Invalid fixture command');}
     return;
