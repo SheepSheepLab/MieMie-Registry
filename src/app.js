@@ -4,6 +4,8 @@ import { randomBytes, randomUUID, createHash, createHmac, timingSafeEqual } from
 import { fail, plain, text, submissionInput } from './validation.js';
 import { createDiscordAdapter, createGitHubAdapter } from './remote.js';
 import { createGitHubRelay } from './github-relay.js';
+import {rolesFor,validateProduct,handleGovernance,moderationSnapshot} from './governance.js';
+import {adminPage,adminScript} from './admin.js';
 const random = () => randomBytes(32).toString('base64url');
 const sha = value => createHash('sha256').update(value).digest('base64url');
 const safeEqual = (a, b) => typeof a === 'string' && typeof b === 'string' && Buffer.byteLength(a) === Buffer.byteLength(b) && timingSafeEqual(Buffer.from(a), Buffer.from(b));
@@ -17,6 +19,7 @@ async function readJSON(req) {
   try { const value = JSON.parse(Buffer.concat(chunks).toString('utf8')); if (!plain(value)) throw new Error(); return value; } catch { fail(400, 'invalid_json', 'JSON 无效'); }
 }
 export function createApp({ config, store, discord = createDiscordAdapter(config), github = createGitHubAdapter(), githubRelay = createGitHubRelay(), now = Date.now, rateLimit = 120, catalogRefreshTtlMs = 900000, catalogRefreshWaitMs = 3000, catalogRefreshBudget = 8 } = {}) {
+  store.bootstrapAdmins(config.adminIds || [],now());
   const flows = new Map(), bridges = new Map(), handoffs = new Map(), rates = new Map(), previewCache = new Map();
   const relayRequests = new Map();
   // OAuth access tokens exist only in process memory, bound to a Registry session.
@@ -37,12 +40,12 @@ export function createApp({ config, store, discord = createDiscordAdapter(config
     const match = /^Bearer ([A-Za-z0-9_-]{43})$/.exec(req.headers.authorization || '');
     if (!match) fail(401, 'unauthorized', '请使用 Discord 登录');
     const session = store.sessionByHash(tokenHash(match[1]), now());
-    if (!session || session.origin !== req.headers.origin || !sessionCredentials.has(session.hash)) fail(401, 'session_expired', '登录已过期，请重新登录');
+    if (!session || session.origin !== (req.headers.origin || (req.headers['sec-fetch-site']==='same-origin' ? config.publicBaseUrl : '')) || !sessionCredentials.has(session.hash)) fail(401, 'session_expired', '登录已过期，请重新登录');
     const user = store.getIdentity(session.discord_id);
     if (!user) fail(401, 'unauthorized', '登录无效');
-    const isAdmin = config.adminIds.has(user.discord_id);
+    const roleFlags = rolesFor(config,store,user), {isAdmin}=roleFlags;
     if (admin && !isAdmin) fail(403, 'forbidden', '需要管理员权限');
-    return { user, session, isAdmin };
+    return { user, session, ...roleFlags };
   }
   const canSubmit = user => { if (user.banned) fail(403, 'banned', '该 Discord 身份已被禁止投稿'); };
   const entry = id => { const row = store.getEntry(id); if (!row) fail(404, 'not_found', '项目不存在'); return row; };
@@ -103,7 +106,7 @@ export function createApp({ config, store, discord = createDiscordAdapter(config
     sessionCredentials.set(tokenHash(token), { accessToken: bridge.credentials.accessToken, expiresAt });
     // Both delivery paths consume the same one-use result, synchronously.
     bridges.delete(key); handoffs.delete(bridge.requestId);
-    return { token, expiresAt: new Date(expiresAt).toISOString(), profile: store.profileDTO(user), isAdmin: config.adminIds.has(user.discord_id), canSubmit: !user.banned };
+    return { token, expiresAt: new Date(expiresAt).toISOString(), profile: store.profileDTO(user), ...rolesFor(config,store,user), canSubmit: !user.banned };
   }
   function send(res, status, value) { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(value)); }
   const handler = async (req, res) => {
@@ -121,7 +124,12 @@ export function createApp({ config, store, discord = createDiscordAdapter(config
       if (method === 'OPTIONS') { res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, OPTIONS'); res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type'); res.setHeader('Access-Control-Max-Age', '600'); res.writeHead(204); res.end(); return; }
       if (!['GET', 'POST', 'PATCH'].includes(method)) fail(405, 'method_not_allowed', '不支持此请求');
       if (method !== 'GET' && (!origin || !config.allowedOrigins.has(origin))) fail(403, 'origin_required', '写入请求必须来自已配置页面');
-      if (path === '/health' && method === 'GET') return send(res, 200, { status: 'ok', version: '0.2.3' });
+      if (path === '/health' && method === 'GET') {if(store.db.prepare('PRAGMA user_version').get().user_version!==3)throw Error('schema');store.db.prepare('SELECT id FROM submissions LIMIT 1').get();return send(res, 200, { status: 'ok', version: '0.3.0' });}
+      if(path==='/admin'&&method==='GET') {
+        res.setHeader('Content-Security-Policy',"default-src 'none'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'");
+        res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'});res.end(adminPage);return;
+      }
+      if(path==='/admin.js'&&method==='GET') {res.writeHead(200,{'Content-Type':'text/javascript; charset=utf-8'});res.end(adminScript);return;}
       if (path === '/' && method === 'GET') { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); res.end('<!doctype html><meta charset="utf-8"><title>MieMie Registry</title><h1>MieMie Registry</h1><p>目录和 Discord 投稿服务。请从 MieMie Hub 扩展中心连接。</p><p>投稿默认上架，不代表安全审核或作者认证。</p>'); return; }
       if (path === '/api/auth/start' && method === 'POST') {
         if (!config.clientId || !config.clientSecret) fail(503, 'oauth_not_configured', 'Registry 尚未配置 Discord OAuth');
@@ -181,7 +189,7 @@ export function createApp({ config, store, discord = createDiscordAdapter(config
         if (!bridge || bridge.expiresAt <= now() || bridge.origin !== origin || bridge.requestId !== body.requestId || !safeEqual(bridge.challenge, sha(body.codeVerifier))) fail(400, 'invalid_bridge', '登录确认无效或已使用');
         return send(res, 200, completeSession(key, bridge));
       }
-      if (path === '/api/me' && method === 'GET') { const auth = authenticate(req); return send(res, 200, { profile: store.profileDTO(auth.user), isAdmin: auth.isAdmin, canSubmit: !auth.user.banned }); }
+      if (path === '/api/me' && method === 'GET') { const auth = authenticate(req); return send(res, 200, { profile: store.profileDTO(auth.user), isAdmin: auth.isAdmin, isOwner: auth.isOwner, canPublishOfficial: auth.canPublishOfficial, canSubmit: !auth.user.banned }); }
       if (path === '/api/auth/logout' && method === 'POST') { const auth = authenticate(req); store.deleteSession(auth.session.hash); sessionCredentials.delete(auth.session.hash); return send(res, 200, { ok: true }); }
       if (path.startsWith('/api/avatars/') && method === 'GET') {
         const key = path.slice('/api/avatars/'.length); if (!/^[a-f0-9-]{36}$/.test(key)) fail(404, 'not_found', '头像不存在');
@@ -226,13 +234,14 @@ export function createApp({ config, store, discord = createDiscordAdapter(config
       if (path === '/api/submissions' && method === 'POST') {
         const auth = authenticate(req), { user } = auth; canSubmit(user); limit(`submit:${user.discord_id}`, 5, 600000);
         if (store.countOwn(user.discord_id) >= 100) fail(429, 'submission_limit', '当前每个投稿者最多 100 条项目');
-        const input = submissionInput(await readJSON(req)); if (input.sourceType === 'github') input.sourceUrl = input.sourceUrl.toLowerCase();
+        const body=await readJSON(req);const input = submissionInput(body); if (input.sourceType === 'github') input.sourceUrl = input.sourceUrl.toLowerCase();
         if (store.sourceDuplicate(input.sourceUrl, user.discord_id)) fail(409, 'duplicate_submission', '你已提交过该来源，可在我的投稿中编辑');
         const discovered = input.sourceType === 'github' ? await inspect(input.sourceUrl) : null, id = randomUUID(), time = now();
+        if(body.distribution===undefined&&input.type==='tavern_extension'&&discovered?.compatibility==='installable')input.distribution='managed_install';
         await validateVisibility(input, auth);
-        canSubmit(authenticate(req).user);
+        const refreshed=authenticate(req);canSubmit(refreshed.user);validateProduct(input,discovered,refreshed);
         if (store.sourceDuplicate(input.sourceUrl, user.discord_id)) fail(409, 'duplicate_submission', '你已提交过该来源，可在我的投稿中编辑');
-        store.transaction(() => { store.insertSubmission({id,ownerId:user.discord_id,input,github:discovered,time}); store.audit(user.discord_id,'create',id,'',time); });
+        store.transaction(() => { store.insertSubmission({id,ownerId:user.discord_id,input,github:discovered,time}); store.audit(user.discord_id,'create',id,'',time,null,{submitterId:user.discord_id,ownerId:user.discord_id,classification:input.classification});if(input.classification==='official')store.audit(user.discord_id,'classification',id,'official submission',time,{classification:null},moderationSnapshot(entry(id))); });
         return send(res, 201, store.entryDTO(entry(id), true));
       }
       const ownMatch = /^\/api\/submissions\/([^/]+)(?:\/(status))?$/.exec(path);
@@ -241,16 +250,16 @@ export function createApp({ config, store, discord = createDiscordAdapter(config
         if (!ownMatch[2] && method === 'PATCH') {
           canSubmit(user); limit(`edit:${user.discord_id}`, 30, 60000);
           const body = await readJSON(req);
-          const merged = { name: row.name, description: row.description, author: row.author, sourceType: row.source_type, sourceUrl: row.source_url, icon: row.icon, tags: JSON.parse(row.tags_json), visibility: row.visibility, visibilitySourceUrl: row.visibility_source_url, ...body };
+          const merged = { name: row.name, description: row.description, author: row.author, sourceType: row.source_type, sourceUrl: row.source_url, icon: row.icon, tags: JSON.parse(row.tags_json), visibility: row.visibility, visibilitySourceUrl: row.visibility_source_url, type:row.product_type,distribution:row.distribution,platforms:JSON.parse(row.platforms_json),websiteUrl:row.website_url,classification:row.classification, ...body };
           if (merged.sourceType === 'discord' && Object.hasOwn(body, 'sourceUrl') && !Object.hasOwn(body, 'visibilitySourceUrl')) merged.visibilitySourceUrl = null;
           const input = submissionInput(merged); if (input.sourceType === 'github') input.sourceUrl = input.sourceUrl.toLowerCase();
           const duplicate = store.sourceDuplicate(input.sourceUrl, user.discord_id, row.id); if (duplicate) fail(409, 'duplicate_submission', '你已提交过该来源，可在我的投稿中编辑');
           // Always revalidate source. Never carry version/hash information into another repo.
           const discovered = input.sourceType === 'github' ? await inspect(input.sourceUrl, input.sourceUrl !== row.source_url) : null, time = now();
           await validateVisibility(input, auth);
-          canSubmit(authenticate(req).user); own(row.id, user);
+          const refreshed=authenticate(req);canSubmit(refreshed.user);own(row.id,user);validateProduct(input,discovered,refreshed,row);
           if (store.sourceDuplicate(input.sourceUrl, user.discord_id, row.id)) fail(409, 'duplicate_submission', '你已提交过该来源，可在我的投稿中编辑');
-          store.transaction(() => { store.updateSubmission({id:row.id,input,github:discovered,time}); store.audit(user.discord_id,'edit',row.id,'',time); });
+          store.transaction(() => { store.updateSubmission({id:row.id,input,github:discovered,time}); store.audit(user.discord_id,'edit',row.id,'',time);if(row.classification!==input.classification)store.audit(user.discord_id,'classification',row.id,'submitter classification change',time,moderationSnapshot(row),moderationSnapshot(entry(row.id))); });
           return send(res, 200, store.entryDTO(entry(row.id), true));
         }
         if (ownMatch[2] && method === 'POST') {
@@ -262,23 +271,11 @@ export function createApp({ config, store, discord = createDiscordAdapter(config
           return send(res, 200, store.entryDTO(entry(row.id), true));
         }
       }
-      if (path === '/api/admin/submissions' && method === 'GET') { authenticate(req, true); const page = Number(requestUrl.searchParams.get('page') || 1); if (!Number.isInteger(page) || page < 1 || page > 10000) fail(400,'invalid_query','页码无效'); const {total,rows} = store.listAdmin(page); return send(res, 200, { items: rows.map(row => ({ ...store.entryDTO(row,true), ownerDiscordUserId: row.owner_id, submitterBanned: !!store.getIdentity(row.owner_id).banned })),page,pageSize:50,total,hasMore:page*50<total }); }
-      const moderation = /^\/api\/admin\/submissions\/([^/]+)\/moderation$/.exec(path);
-      if (moderation && method === 'POST') {
-        const { user } = authenticate(req,true), row = entry(moderation[1]), body = await readJSON(req);
-        const states = { hide: 'hidden', unlist: 'unlisted', restore: 'visible' };
-        if (!states[body.action]) fail(400,'invalid_action','管理操作无效');
-        const reason = text(body.reason,'原因',500,true);
-        store.transaction(() => { store.setModeration(row.id,states[body.action],reason,now()); store.audit(user.discord_id,`admin_${body.action}`,row.id,reason,now()); });
-        return send(res,200,store.entryDTO(entry(row.id),true));
-      }
-      const ban = /^\/api\/admin\/identities\/(\d{15,22})\/ban$/.exec(path);
-      if (ban && method === 'POST') {
-        const { user } = authenticate(req,true), target = store.getIdentity(ban[1]), body = await readJSON(req);
-        if (!target) fail(404,'not_found','投稿者不存在'); if (typeof body.banned !== 'boolean') fail(400,'invalid_input','banned 必须为布尔值');
-        const reason = text(body.reason,'原因',500,true);
-        store.transaction(() => { store.setBanned(target.discord_id,body.banned); store.audit(user.discord_id,body.banned ? 'ban' : 'unban',target.discord_id,reason,now()); });
-        return send(res,200,{ok:true});
+      if(path.startsWith('/api/admin/')) {
+        const auth=authenticate(req,true);
+        // Read body first, then re-read roles/ban to prevent revocation races.
+        const body=method==='GET'?null:await readJSON(req);
+        return send(res,200,handleGovernance({path,method,body,auth:authenticate(req,true),store,config,now,query:requestUrl.searchParams}));
       }
       fail(404, 'not_found', '接口不存在');
     } catch (error) {

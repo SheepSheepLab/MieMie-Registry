@@ -2,7 +2,7 @@
 
 本目录服务属于咩咩（MieMie）开源软件与社区生态，由生态 Founder / 创始人 SheepSheep 发起和创建。SheepSheepLab 是官方 GitHub 开发、维护与发布命名空间，官方项目主要通过该命名空间维护和发布，并欢迎社区贡献者共同参与。
 
-MieMie Extension Ecosystem MVP 的独立目录与 Discord 投稿服务，当前版本 **0.2.3**。软件代码 Copyright © 2026 SheepSheep，采用 [GNU GPL v3.0 or later](LICENSE)，SPDX：`GPL-3.0-or-later`。
+MieMie Extension Ecosystem MVP 的独立目录与 Discord 投稿服务，当前版本 **0.3.0**。软件代码 Copyright © 2026 SheepSheep，采用 [GNU GPL v3.0 or later](LICENSE)，SPDX：`GPL-3.0-or-later`。
 
 社区贡献者（Community Contributors）保留各自的贡献者身份；除另有说明，贡献内容的版权归相应贡献者所有。
 
@@ -27,7 +27,7 @@ npm start
 
 将 `.env.example` 复制为本地 `.env`，填写自己的 Discord 开发者应用配置，再重新启动。`.env`、数据库和备份均被 Git 忽略。开发测试连接位于 Hub「设置 → 高级 / 开发者选项」，默认折叠；生产 Hub 内置官方 HTTPS 地址，普通用户无需配置。服务端 `CORS_ORIGINS` 必须包含酒馆页面的精确 Origin。
 
-提供 Dockerfile、Compose、健康检查和 SQLite／备份持久卷配置。生产模式缺少真实 HTTPS 地址、OAuth 应用或私有 Secret 时拒绝启动。当前未部署正式公网服务；容器运行、持久卷权限和真实 Discord 授权需在选定托管平台后验证。见 [部署说明](docs/DEPLOYMENT.md)。
+提供 Dockerfile、Compose、健康检查和 SQLite／备份持久卷配置。生产模式缺少真实 HTTPS 地址、OAuth 应用或私有 Secret 时拒绝启动。官方生产服务使用 https://registry.sheepsheeplab.com；生产版本以 /health 为准。见 [部署说明](docs/DEPLOYMENT.md)。
 
 ```sh
 npm run build
@@ -42,7 +42,7 @@ npm run backup
 - 匿名公开目录和登录后按 Guild 成员身份过滤的目录；分页、来源筛选、搜索及详情在服务端执行同一 ACL；公开 DTO 不包含 Discord User ID、Username、Email、Token、Session、封禁信息或管理员名单。
 - Discord Authorization Code 登录，只请求 `identify guilds`，不读取消息或邮箱。每次登录刷新显示名／Username／头像；Snowflake 是内部唯一身份和所有权主键。
 - 「我的」投稿、编辑、下架、重新上架；下架保留数据库记录。
-- 服务端 Discord ID 白名单管理员可以隐藏、恢复、管理下架、封禁和解除封禁。普通用户无法调用管理接口。
+- Owner 私有根身份、数据库 Admin / Official Publisher 角色各自独立。Admin 仅 Hide/Recover Community；Owner 管理封禁、角色、保护和审计；任何角色不能编辑他人内容。详见 [Governance](docs/GOVERNANCE.md)。
 - GitHub 公开仓库验证和 Manifest／Release 预填；机器安装兼容性只说明格式可识别，Hub 安装前还必须重新下载并完整校验。
 - 无需 Discord 登录的受限 GitHub 文件传输接口；只接受仓库、Release ID、Asset ID，服务端验证机器元数据后只能转发该元数据或其唯一安装包。不是任意 URL 代理；不会把 Registry 标成作品文件来源。Hub 收到字节后仍独立校验 Hash、版本和身份。
 - Discord 来源只保存 `discord.com/channels/...` 原帖，不保存临时附件下载地址。

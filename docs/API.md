@@ -59,7 +59,7 @@ Package 返回前校验完整文件 SHA-256、单脚本结构、空 `data`、内
 }
 ```
 
-Discord 项目 `github`、`version`、`extensionId` 为 null。只有 `github.compatibility === "installable"` 可显示机器安装能力，但 Hub 必须直接向作者 GitHub 重新检查，不能信任此缓存结果的 Hash。目录版本是最后投稿／编辑时的发现快照，已安装版本检查由 Hub 直接访问作者 Release。
+Discord 项目 `github`、`version`、`extensionId` 为 null。只有 `type === "tavern_extension"`、`distribution === "managed_install"` 且 `github.compatibility === "installable"` 可显示机器安装能力，但 Hub 必须直接向作者 GitHub 重新检查，不能信任此缓存结果的 Hash。目录版本按 15 分钟缓存刷新作者 Release，不需重新投稿，已安装版本检查由 Hub 直接访问作者 Release。
 
 ## Discord 登录交接
 
@@ -76,7 +76,7 @@ OAuth Secret、Discord Token、verifier 和 Registry 会话不写 URL 或持久�
 
 ## Authenticated
 
-- `GET /api/me` → `{profile,isAdmin,canSubmit}`。
+- `GET /api/me` → `{profile,isAdmin,isOwner,canPublishOfficial,canSubmit}`。
 - `POST /api/auth/logout {}` → `{ok:true}`，服务器立即删除当前会话。
 - `GET /api/submissions` → `{items}`，只返回本人投稿，额外含 `status`（listed/unlisted）、`moderation`（visible/hidden/unlisted）和 `moderationReason`。
 - `GET /api/github/preview?url=https://github.com/owner/repo` → GitHub 发现对象，供表单预填；必须让用户确认展示信息。
@@ -86,16 +86,21 @@ OAuth Secret、Discord Token、verifier 和 Registry 会话不写 URL 或持久�
 
 创建字段：`name`（1–100）、`description`（1–2000）、`author`（1–100）、`sourceType`、`sourceUrl`、可选 `icon`、`tags`（最多 8 个，每个最多 30 字符）、`visibility`（public / discord_guild）与 `visibilitySourceUrl`。编辑允许同一字段集合；sourceUrl 重新验证并重新产生仓库发现信息，不继承旧仓库 Hash。
 
-## Admin
+## Governance
 
-权限来自服务器 `MIEMIE_ADMIN_DISCORD_IDS`，每个请求重新核对，不接受客户端传入角色。
+见 [权限、类型与保留规则](GOVERNANCE.md)。治理接口只存在 Registry Web Console，所有操作均服务端验证。
 
-- `GET /api/admin/submissions?page=1` → 50 条分页；只有该管理员接口额外提供必要的 `ownerDiscordUserId`、`submitterBanned`。
-- `POST /api/admin/submissions/:id/moderation {action:"hide"|"unlist"|"restore",reason}`。
-- `POST /api/admin/identities/:discordId/ban {banned:true|false,reason}`。
+- `GET /api/admin/submissions?page=1`：Admin 仅未保护 Community，Owner 全部；只有 Owner 响应含内部身份追溯字段。
+- `POST /api/admin/submissions/:id/moderation {action:"hide"|"restore",reason}`：Admin 限 Community；Owner 任意。
+- `POST /api/admin/submissions/:id/protection {enabled,reason}`：Owner only。
+- `POST /api/admin/submissions/:id/security-hold {enabled,reason}`：Owner only。
+- `POST /api/admin/identities/:discordId/ban {banned,reason}`：Owner only。
+- `POST /api/admin/identities/:discordId/roles {role:"admin"|"official_publisher",enabled,reason}`：Owner only。
+- `GET /api/admin/identities?page=1`、`GET /api/admin/audit?page=1`：Owner only，50 条分页。
 
-restore 只恢复管理层可见性，不覆盖投稿者自己的 unlisted 决定。封禁阻止继续提交、编辑及上下架，仍允许查看与登出。封禁不会自动删除历史作品；管理员按需要另行隐藏。审计记录保留在私有数据库，不进入公开 API。
+治理写入原因必填（1–500 字符）；无编辑他人内容、变更 Owner 根身份的接口。Recover 不覆盖投稿者的 Soft Unlist。
 
+投稿另支持 `classification`（默认 community；official 要求可信角色）、`type`、`distribution`、`platforms`、`websiteUrl`。Public DTO 返回这些展示字段，不返回 submitter/owner ID、Hold、Retention 或审计。
 
 ### 0.1.2 GitHub 配额错误
 

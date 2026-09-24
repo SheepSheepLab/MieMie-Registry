@@ -46,7 +46,7 @@ const fixtureDirectory = await mkdtemp(join(tmpdir(), 'miemie-registry-hub-contr
 const databasePath = join(fixtureDirectory, 'isolated-test.sqlite');
 const store = openStore(databasePath);
 const config = loadConfig({DISCORD_CLIENT_ID: '000000000000000001', DISCORD_CLIENT_SECRET: 'test-only-discord-contract-secret',
-  SESSION_SECRET: 'test-only-hub-contract-session-secret-xxxxxxxx', MIEMIE_ADMIN_DISCORD_IDS: IDS.ADMIN});
+  SESSION_SECRET: 'test-only-hub-contract-session-secret-xxxxxxxx', MIEMIE_OWNER_DISCORD_ID: IDS.ADMIN});
 let clock = Date.now();
 const profiles = Object.fromEntries(Object.entries(IDS).map(([name,id]) => [name, {id, displayName: 'Development Fixture ' + name, username: 'fixture_' + name, avatarBytes: null}]));
 const githubCalls = [];
@@ -171,7 +171,7 @@ try {
     assert.equal(store.db.prepare('SELECT owner_id FROM submissions WHERE id=?').get(github.id).owner_id, IDS.A);
     assert.equal((await a.client.api('/api/catalog/' + github.id)).submitter.displayName, profiles.A.displayName);
   });
-  await record('admin route contract can hide/restore and ban/unban without granting public identity access', async () => {
+  await record('Owner route contract can hide/restore and ban/unban without granting public identity access', async () => {
     await admin.client.login(); assert.equal(admin.client.getIdentity().isAdmin, true);
     const rows = await admin.client.api('/api/admin/submissions', {authenticated: true}); assert.ok(rows.items.some(item => item.ownerDiscordUserId === IDS.A));
     const moderate = action => admin.client.api('/api/admin/submissions/' + github.id + '/moderation', {method: 'POST', authenticated: true, body: {action, reason: 'Development Fixture moderation'}});

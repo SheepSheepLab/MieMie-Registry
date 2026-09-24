@@ -1,6 +1,6 @@
 # 本地与部署准备
 
-Registry 0.2.1 可以独立运行，无需 Hub／Polisher 源码目录；没有云厂商绑定，也不要求立即购买服务器。
+Registry 0.3.0 可以独立运行，无需 Hub／Polisher 源码目录；没有云厂商绑定，也不要求立即购买服务器。
 
 ## 一条命令启动
 
@@ -21,7 +21,8 @@ Registry 0.2.1 可以独立运行，无需 Hub／Polisher 源码目录；没有�
 | DISCORD_REDIRECT_URI | 必须精确等于 PUBLIC_BASE_URL/api/auth/callback |
 | SESSION_SECRET | 至少 32 字符的随机 Secret；生产必填 |
 | SESSION_TTL_SECONDS | 会话寿命 60–86400 秒，默认 8 小时 |
-| MIEMIE_ADMIN_DISCORD_IDS | 私有 Snowflake 管理员白名单，逗号分隔 |
+| MIEMIE_OWNER_DISCORD_ID | 私有根身份；仅在服务器初始化 |
+| MIEMIE_ADMIN_DISCORD_IDS | 旧管理员一次性导入，之后仅数据库角色生效 |
 
 开发时空 SESSION_SECRET 自动产生进程内随机值，重启后旧 Session 失效；固定随机值也不会保留 Discord 授权上下文：Discord access token 仅在服务端进程内存，重启后需重新登录才能访问成员目录。真实 Session／Discord 身份仍只在服务端数据库；Hub Token 不做持久存储。
 
@@ -60,7 +61,7 @@ docker compose exec -T registry node tools/backup.mjs
 
 此路径不需要 Discord OAuth 配置或 GitHub Token。Registry 必须能够向 GitHub 官方 API 和 Release Asset 域名发起 HTTPS 请求。
 
-1. 启动 Registry 0.2.1，确认 `/health` 返回对应版本。
+1. 启动 Registry 0.3.0，确认 `/health` 返回对应版本。
 2. 将真实酒馆页面的精确 Origin（协议、域名、端口，不含路径）加入 `CORS_ORIGINS`；重启服务。
 3. 开发测试时在 Hub「设置 → 高级 / 开发者选项」启用地址覆盖；生产 Hub 由构建配置一次官方 HTTPS 地址，普通扩展中心不显示服务地址配置。酒馆和 Registry 必须满足浏览器 HTTPS／混合内容及本地网络访问规则；远程设备不能将 `127.0.0.1` 当作另一台机器的 Registry。
 4. 对作者仓库执行预览／安装。GitHub API 元数据继续直接读取；Asset 受浏览器 CORS 限制时，Hub 可以请求 Registry 受限 relay，服务端校验作者原始字节后转发。
@@ -77,7 +78,7 @@ docker compose exec -T registry node tools/backup.mjs
 6. 设置 Registry URL 和酒馆 Origin allowlist，启动服务；在 Hub「我的」点击 Discord 登录，确认显示自己的当前公开资料。
 7. 测试显示名／头像修改后重新登录，确认 Profile 更新、旧投稿所有权保留。
 
-生产 OAuth 浏览器绑定 Cookie 为 `HttpOnly; Secure; SameSite=Lax`，只用于 popup 回调并在使用后清除；它不是第三方 Session Cookie。Hub 后续持有的 Registry 随机会话凭据仅保存在 iframe 内存，不是 Discord Token；Discord access token 只保存在 Registry 内存。关闭／刷新 Hub 或重启 Registry 后需要重新登录。管理员身份只由服务端私有白名单判断，不由客户端参数授予。
+生产 OAuth 浏览器绑定 Cookie 为 `HttpOnly; Secure; SameSite=Lax`，只用于 popup 回调并在使用后清除；它不是第三方 Session Cookie。Hub 后续持有的 Registry 随机会话凭据仅保存在 iframe 内存，不是 Discord Token；Discord access token 只保存在 Registry 内存。关闭／刷新 Hub 或重启 Registry 后需要重新登录。Owner 由私有配置判断，其余角色在数据库中由 Owner 管理，不接受客户端角色参数。
 
 实现依据 [Discord 官方 OAuth2 文档](https://discord.com/developers/docs/topics/oauth2)：Authorization Code、一次性 state、服务端令牌交换；`identify` 允许读取 `/users/@me`；`guilds` 允许读取 `/users/@me/guilds`。服务器仅使用 ID 判断成员身份，不把服务器列表或 OAuth Token 发给 Hub。Hub 与 Registry 的 verifier 交接是 Registry 自身的一次性会话桥，不声称 Discord 支持未使用的 PKCE 参数。
 
@@ -105,3 +106,5 @@ Hub「我的 → 使用 Discord 登录 → 提交扩展 → GitHub」填写 Poli
 在隔离环境运行 `node tests/browser-oauth.mjs --hub <确定版本的HubJSON> --sha256 <该文件SHA256>`，打开输出的本地页面并点击 Start，然后在明确标注的 Mock Discord 弹窗点击 Approve。可添加 `--auto-consent true` 自动通过此测试弹窗的模拟授权；此选项仅存在测试脚本，不进入生产 server.js。
 
 该测试执行真实浏览器 popup、HttpOnly Cookie、CORS、postMessage、一次性会话交接和目录权限请求，使用内存测试库和本地 Mock Discord，绝不连接真实 Discord 或读取私有 `.env`。它不能代替真实 Discord Developer Portal 回调和授权验收。
+
+治理升级、Owner 初始化和保留策略见 [GOVERNANCE.md](GOVERNANCE.md)。反向代理需转发 `/admin`、`/admin.js` 到同一 localhost 服务，不公开任何文件目录。
