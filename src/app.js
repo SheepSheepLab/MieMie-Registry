@@ -3,7 +3,7 @@
 import { randomBytes, randomUUID, createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { fail, plain, text, submissionInput } from './validation.js';
 import { createDiscordAdapter, createGitHubAdapter } from './remote.js';
-import { createGitHubRelay } from './github-relay.js';
+import { createGitHubRelay, createHubReleaseRelay } from './github-relay.js';
 import {rolesFor,validateProduct,handleGovernance,moderationSnapshot} from './governance.js';
 import {adminPage,adminScript} from './admin.js';
 const random = () => randomBytes(32).toString('base64url');
@@ -18,7 +18,7 @@ async function readJSON(req) {
   for await (const chunk of req) { length += chunk.length; if (length > 16384) fail(413, 'body_too_large', '请求超过 16 KiB'); chunks.push(chunk); }
   try { const value = JSON.parse(Buffer.concat(chunks).toString('utf8')); if (!plain(value)) throw new Error(); return value; } catch { fail(400, 'invalid_json', 'JSON 无效'); }
 }
-export function createApp({ config, store, discord = createDiscordAdapter(config), github = createGitHubAdapter(), githubRelay = createGitHubRelay(), now = Date.now, rateLimit = 120, catalogRefreshTtlMs = 900000, catalogRefreshWaitMs = 3000, catalogRefreshBudget = 8 } = {}) {
+export function createApp({ config, store, discord = createDiscordAdapter(config), github = createGitHubAdapter(), githubRelay = createGitHubRelay(), hubRelay = createHubReleaseRelay(), now = Date.now, rateLimit = 120, catalogRefreshTtlMs = 900000, catalogRefreshWaitMs = 3000, catalogRefreshBudget = 8 } = {}) {
   store.bootstrapAdmins(config.adminIds || [],now());
   const flows = new Map(), bridges = new Map(), handoffs = new Map(), rates = new Map(), previewCache = new Map();
   const relayRequests = new Map();
@@ -124,7 +124,7 @@ export function createApp({ config, store, discord = createDiscordAdapter(config
       if (method === 'OPTIONS') { res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, OPTIONS'); res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type'); res.setHeader('Access-Control-Max-Age', '600'); res.writeHead(204); res.end(); return; }
       if (!['GET', 'POST', 'PATCH'].includes(method)) fail(405, 'method_not_allowed', '不支持此请求');
       if (method !== 'GET' && (!origin || !config.allowedOrigins.has(origin))) fail(403, 'origin_required', '写入请求必须来自已配置页面');
-      if (path === '/health' && method === 'GET') {if(store.db.prepare('PRAGMA user_version').get().user_version!==3)throw Error('schema');store.db.prepare('SELECT id FROM submissions LIMIT 1').get();return send(res, 200, { status: 'ok', version: '0.3.0' });}
+      if (path === '/health' && method === 'GET') {if(store.db.prepare('PRAGMA user_version').get().user_version!==3)throw Error('schema');store.db.prepare('SELECT id FROM submissions LIMIT 1').get();return send(res, 200, { status: 'ok', version: '0.3.1' });}
       if(path==='/admin'&&method==='GET') {
         res.setHeader('Content-Security-Policy',"default-src 'none'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'");
         res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'});res.end(adminPage);return;
@@ -213,7 +213,7 @@ export function createApp({ config, store, discord = createDiscordAdapter(config
         if (!row || row.owner_status !== 'listed' || row.moderation !== 'visible' || (row.visibility !== 'public' && !permittedGuilds.includes(row.visibility_guild_id))) fail(404, 'not_found', '项目不存在');
         return send(res, 200, store.entryDTO(row));
       }
-      if (path === '/api/packages/github/asset' && method === 'POST') {
+      if (['/api/packages/github/asset', '/api/hub/releases/asset'].includes(path) && method === 'POST') {
         if (requestUrl.search) fail(400, 'invalid_relay_request', '文件传输接口不接受 URL 查询参数');
         const ip = req.socket.remoteAddress || 'unknown';
         limit(`relay:${ip}`, 12, 60000);
@@ -223,7 +223,7 @@ export function createApp({ config, store, discord = createDiscordAdapter(config
         if (relayRequests.size >= 4 || [...relayRequests.values()].filter(value => value === ip).length >= 2) fail(429, 'relay_busy', '文件传输任务过多，请稍后重试');
         relayRequests.set(controller, ip); req.once('aborted', cancel); res.once('close', cancel);
         try {
-          const bytes = await githubRelay.read(body, { signal: controller.signal });
+          const bytes = await (path === '/api/hub/releases/asset' ? hubRelay : githubRelay).read(body, { signal: controller.signal });
           if (controller.signal.aborted || res.destroyed) return;
           res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': bytes.length, 'Cache-Control': 'no-store' }); res.end(bytes);
         } finally { req.off('aborted', cancel); res.off('close', cancel); controller.abort(); relayRequests.delete(controller); }

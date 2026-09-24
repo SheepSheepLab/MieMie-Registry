@@ -38,23 +38,37 @@ function validateMetadata(value, repository, release) {
   if (manifest.id !== value.productId || (value.manifest.contributes !== undefined && !plain(value.manifest.contributes))) failure();
   return value;
 }
+function validateHubMetadata(value, release) {
+  if (!keys(value, ['schemaVersion', 'format', 'productId', 'version', 'tag', 'scriptId', 'asset', 'contentSha256']) ||
+      value.schemaVersion !== 1 || value.format !== 'tavern-helper-script' || value.productId !== 'miemie.hub' ||
+      value.scriptId !== HUB_ID || value.tag !== release.tag_name || value.version !== release.tag_name.slice(1) ||
+      !hash(value.contentSha256) || !keys(value.asset, ['name', 'size', 'sha256']) ||
+      value.asset.name !== `MieMie-Hub-${value.version}.json` || !positive(value.asset.size) ||
+      value.asset.size > 16777216 || !hash(value.asset.sha256)) failure();
+  return value;
+}
 function verifyBytes(bytes, reference) {
   if (bytes.length !== reference.size || `sha256:${digest(bytes)}` !== reference.digest) fail(502, 'digest_mismatch', '作者 GitHub 文件大小或 SHA-256 不匹配');
 }
-function verifyPackage(bytes, metadata) {
+function verifyPackage(bytes, metadata, hub = false) {
   const script = decode(bytes);
   if (!keys(script, ['type', 'enabled', 'name', 'id', 'content', 'info', 'button', 'data', 'export_with']) || script.type !== 'script' || typeof script.enabled !== 'boolean' || typeof script.name !== 'string' || script.id !== metadata.scriptId || typeof script.content !== 'string' || typeof script.info !== 'string' || !plain(script.data) || Object.keys(script.data).length || !keys(script.button, ['enabled', 'buttons']) || typeof script.button.enabled !== 'boolean' || !Array.isArray(script.button.buttons) || script.button.buttons.some(b => !keys(b, ['name', 'visible']) || typeof b.name !== 'string' || typeof b.visible !== 'boolean') || !keys(script.export_with, ['data', 'button']) || typeof script.export_with.data !== 'boolean' || typeof script.export_with.button !== 'boolean') failure();
+  const prefix = hub ? '// MieMie-Hub-Build: ' : PREFIX;
   const newline = script.content.indexOf('\n');
-  if (!script.content.startsWith(PREFIX) || newline < 0 || newline > 2048 || !script.content.slice(newline + 1).trim()) failure();
-  const identity = decode(Buffer.from(script.content.slice(PREFIX.length, newline)));
+  if (!script.content.startsWith(prefix) || newline < 0 || newline > 2048 || !script.content.slice(newline + 1).trim()) failure();
+  const identity = decode(Buffer.from(script.content.slice(prefix.length, newline)));
+  if (hub) {
+    if (!keys(identity, ['schemaVersion', 'productId', 'version', 'scriptId']) || identity.schemaVersion !== 1 || identity.productId !== 'miemie.hub' || identity.version !== metadata.version || identity.scriptId !== HUB_ID || digest(Buffer.from(script.content, 'utf8')) !== metadata.contentSha256) failure();
+    return;
+  }
   if (!keys(identity, ['schemaVersion', 'productId', 'version', 'scriptId', 'repository']) || identity.schemaVersion !== 1 || identity.productId !== metadata.productId || identity.version !== metadata.version || identity.scriptId !== metadata.scriptId || githubRepo(identity.repository).url.toLowerCase() !== githubRepo(metadata.manifest.repository).url.toLowerCase() || digest(Buffer.from(script.content, 'utf8')) !== metadata.contentSha256) failure();
 }
 const assetLock = value => JSON.stringify([value.id, value.name, value.size, value.digest, value.url, value.state]);
 
 // A bounded byte transport, never an arbitrary-URL proxy. No downloaded code is
 // executed or stored. Hub independently repeats every package check on receipt.
-export function createGitHubRelay({ fetchImpl = fetch, queryTimeoutMs = 15000, assetTimeoutMs = 60000, operationTimeoutMs = 90000, now = Date.now, metadataCacheTtlMs = 120000 } = {}) {
-  const headers = { Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'MieMie-Registry/0.2.1' };
+function createReleaseRelay({ hub = false, fetchImpl = fetch, queryTimeoutMs = 15000, assetTimeoutMs = 60000, operationTimeoutMs = 90000, now = Date.now, metadataCacheTtlMs = 120000 } = {}) {
+  const headers = { Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'MieMie-Registry/0.3.1' };
   const repositoryCache = new Map(), metadataCache = new Map(); let rateReset = 0;
   function limited() {return Object.assign(new Error('GitHub 匿名 API 额度暂时用完，请在配额恢复后重试'), {status: 429, code: 'github_rate_limited', retryAt: new Date(rateReset).toISOString()});}
   function cacheGet(cache, key) {const item = cache.get(key); if (item && item.until > now()) return item.value; cache.delete(key); return undefined;}
@@ -65,6 +79,11 @@ export function createGitHubRelay({ fetchImpl = fetch, queryTimeoutMs = 15000, a
     cache.set(key, {value, until: now() + Math.min(metadataCacheTtlMs, 120000)});
   }
   async function read(input, { signal } = {}) {
+    if (hub) {
+      if (!keys(input, ['releaseId', 'assetId'])) fail(400, 'invalid_relay_request', 'Hub 转发仅接受 releaseId 和 assetId');
+      input = {...input, repository: 'https://github.com/SheepSheepLab/MieMie-Hub'};
+    }
+    const metadataName = hub ? 'MieMie-Hub-update.json' : METADATA;
     if (!keys(input, ['repository', 'releaseId', 'assetId']) || !positive(input.releaseId) || !positive(input.assetId)) fail(400, 'invalid_relay_request', '仅接受 repository、releaseId 和 assetId');
     const repository = githubRepo(input.repository);
     if (repository.url !== input.repository) fail(400, 'invalid_relay_request', '需要规范化的作者 GitHub 仓库地址');
@@ -120,23 +139,23 @@ export function createGitHubRelay({ fetchImpl = fetch, queryTimeoutMs = 15000, a
         cachePut(repositoryCache, base, {private: false, full_name: repo.full_name});
         const releaseURL = `${base}/releases/${input.releaseId}`;
         const release = validateRelease(decode(await download(releaseURL)), input.releaseId);
-        const metadataAsset = asset(release, METADATA, base, 65536);
+        const metadataAsset = asset(release, metadataName, base, 65536);
         const cacheKey = JSON.stringify([base, release.id, assetLock(metadataAsset)]);
         const metadataBytes = cacheGet(metadataCache, cacheKey)?.slice() || await download(metadataAsset.url, { limit: 65536, binary: true });
         verifyBytes(metadataBytes, metadataAsset);
-        const metadata = validateMetadata(decode(metadataBytes), repository, release);
+        const metadata = hub ? validateHubMetadata(decode(metadataBytes), release) : validateMetadata(decode(metadataBytes), repository, release);
         const packageAsset = asset(release, metadata.asset.name, base, 16777216);
         if (packageAsset.size !== metadata.asset.size || packageAsset.digest !== `sha256:${metadata.asset.sha256}`) failure();
         if (![metadataAsset.id, packageAsset.id].includes(input.assetId)) fail(400, 'asset_not_allowed', '只能传输已验证 Manifest 指定的安装包或机器元数据');
         let bytes = metadataBytes;
         if (input.assetId === packageAsset.id) {
           bytes = await download(packageAsset.url, { limit: 16777216, binary: true, timeout: assetTimeoutMs });
-          verifyBytes(bytes, packageAsset); verifyPackage(bytes, metadata);
+          verifyBytes(bytes, packageAsset); verifyPackage(bytes, metadata, hub);
         }
         // Re-read authoritative metadata after transfer, catching replaced assets,
         // changed tags, draft transitions and package-name/ID rebinding.
         const fresh = validateRelease(decode(await download(releaseURL)), input.releaseId);
-        if (fresh.tag_name !== release.tag_name || assetLock(asset(fresh, METADATA, base, 65536)) !== assetLock(metadataAsset) || assetLock(asset(fresh, metadata.asset.name, base, 16777216)) !== assetLock(packageAsset)) fail(409, 'release_changed', '作者 GitHub Release 在传输期间变化，请重新预览');
+        if (fresh.tag_name !== release.tag_name || assetLock(asset(fresh, metadataName, base, 65536)) !== assetLock(metadataAsset) || assetLock(asset(fresh, metadata.asset.name, base, 16777216)) !== assetLock(packageAsset)) fail(409, 'release_changed', '作者 GitHub Release 在传输期间变化，请重新预览');
         cachePut(metadataCache, cacheKey, Buffer.from(metadataBytes));
         return bytes;
       })();
@@ -148,3 +167,8 @@ export function createGitHubRelay({ fetchImpl = fetch, queryTimeoutMs = 15000, a
   }
   return { read };
 }
+
+// Separate server-selected validators: clients cannot turn an Extension into Hub,
+// choose a Hub repository, or supply an arbitrary download URL.
+export const createGitHubRelay = options => createReleaseRelay({...options, hub: false});
+export const createHubReleaseRelay = options => createReleaseRelay({...options, hub: true});
