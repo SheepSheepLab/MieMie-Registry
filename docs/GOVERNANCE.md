@@ -1,4 +1,4 @@
-# Governance v1 / Registry 0.3.0
+# Governance v1 / Registry 0.3.2
 
 角色可以叠加；每个请求从服务端重新判断，客户端角色显示不是授权。
 
@@ -14,7 +14,7 @@
 
 Owner 来自服务器私有 `MIEMIE_OWNER_DISCORD_ID`，不能通过 API/Console 修改或封禁。Admin 与 Official Publisher 在 `roles` 表中保存，不形成权限等级链。旧 `MIEMIE_ADMIN_DISCORD_IDS` **仅在首次启动新版时导入一次**，写入 bootstrap 审计及完成标记；以后撤销角色不会被旧环境变量复活。完成后可移除旧变量。旧 Admin 不自动成为 Owner。
 
-默认所有投稿都是 Community，不根据 Author、仓库组织名或 Profile 猜测 Official。Owner/Publisher 可以通过「我的」将自己的投稿设为 Official，默认开启 moderation protection。撤销 Publisher 后不能继续编辑 Official 内容或创建 Official；其已有记录仍保留原分类，不自动下架。可改为 Community 后管理。Admin 即使移除保护也不能管理 Official；只有 Owner 能更改保护。
+默认所有投稿都是 Community，不根据 Author、仓库组织名或 Profile 猜测 Official。Owner/Publisher 可以通过「我的」将自己的投稿设为 Official，默认开启 moderation protection。撤销 Publisher 后不能继续编辑 Official 内容或创建 Official；其已有记录仍保留原分类，不自动下架。可改为 Community 后管理。Admin 即使移除保护也不能管理 Official；只有 Owner 能主动解除保护。改回 Community 不会清除已有保护，作者编辑期间新设置的保护和 Security Hold 也会保留。分类审计读取事务写入前的最新治理状态。
 
 封禁保留身份与历史记录，仍允许登录、读取目录、查看本人投稿和退出；禁止投稿、编辑、上下架、资料预览及治理写入。已有项目不会因 Ban 自动隐藏，Owner 按需另行 Hide。禁止所有人编辑他人内容；没有平台代编接口。
 

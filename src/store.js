@@ -111,7 +111,10 @@ export function openStore(path) {
   function setProduct(id,input) {
     db.prepare('UPDATE submissions SET product_type=?,distribution=?,platforms_json=?,website_url=? WHERE id=?').run(input.type||'tavern_extension',input.distribution||(input.sourceType==='discord'?'open_url':'external_release'),JSON.stringify(input.platforms||[]),input.websiteUrl||null,id);
     const current=getEntry(id);
-    if (input.classification && input.classification !== current.classification) db.prepare('UPDATE submissions SET classification=?,moderation_protected=? WHERE id=?').run(input.classification,input.classification==='official'?1:0,id);
+    // Publishing Official enables protection by default. Returning to Community
+    // must not revoke a governance decision: only the Owner protection endpoint
+    // may remove protection (including protection set while validation awaited).
+    if (input.classification && input.classification !== current.classification) db.prepare('UPDATE submissions SET classification=?,moderation_protected=? WHERE id=?').run(input.classification,input.classification==='official'?1:current.moderation_protected,id);
   }
   // Cache refresh must never overwrite edits, ownership, ACL or moderation.
   const refreshGithub = (row, github) => db.prepare("UPDATE submissions SET github_json=? WHERE id=? AND source_type='github' AND source_url=? AND github_json IS ?").run(JSON.stringify(github),row.id,row.source_url,row.github_json);

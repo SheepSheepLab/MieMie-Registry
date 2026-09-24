@@ -124,7 +124,7 @@ export function createApp({ config, store, discord = createDiscordAdapter(config
       if (method === 'OPTIONS') { res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, OPTIONS'); res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type'); res.setHeader('Access-Control-Max-Age', '600'); res.writeHead(204); res.end(); return; }
       if (!['GET', 'POST', 'PATCH'].includes(method)) fail(405, 'method_not_allowed', '不支持此请求');
       if (method !== 'GET' && (!origin || !config.allowedOrigins.has(origin))) fail(403, 'origin_required', '写入请求必须来自已配置页面');
-      if (path === '/health' && method === 'GET') {if(store.db.prepare('PRAGMA user_version').get().user_version!==3)throw Error('schema');store.db.prepare('SELECT id FROM submissions LIMIT 1').get();return send(res, 200, { status: 'ok', version: '0.3.1' });}
+      if (path === '/health' && method === 'GET') {if(store.db.prepare('PRAGMA user_version').get().user_version!==3)throw Error('schema');store.db.prepare('SELECT id FROM submissions LIMIT 1').get();return send(res, 200, { status: 'ok', version: '0.3.2' });}
       if(path==='/admin'&&method==='GET') {
         res.setHeader('Content-Security-Policy',"default-src 'none'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'");
         res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'});res.end(adminPage);return;
@@ -259,7 +259,15 @@ export function createApp({ config, store, discord = createDiscordAdapter(config
           await validateVisibility(input, auth);
           const refreshed=authenticate(req);canSubmit(refreshed.user);own(row.id,user);validateProduct(input,discovered,refreshed,row);
           if (store.sourceDuplicate(input.sourceUrl, user.discord_id, row.id)) fail(409, 'duplicate_submission', '你已提交过该来源，可在我的投稿中编辑');
-          store.transaction(() => { store.updateSubmission({id:row.id,input,github:discovered,time}); store.audit(user.discord_id,'edit',row.id,'',time);if(row.classification!==input.classification)store.audit(user.discord_id,'classification',row.id,'submitter classification change',time,moderationSnapshot(row),moderationSnapshot(entry(row.id))); });
+          store.transaction(() => {
+            // Source validation may await network I/O while Owner governance changes.
+            const before = entry(row.id);
+            store.updateSubmission({id:row.id,input,github:discovered,time});
+            store.audit(user.discord_id,'edit',row.id,'',time);
+            if (before.classification !== input.classification) {
+              store.audit(user.discord_id,'classification',row.id,'submitter classification change',time,moderationSnapshot(before),moderationSnapshot(entry(row.id)));
+            }
+          });
           return send(res, 200, store.entryDTO(entry(row.id), true));
         }
         if (ownMatch[2] && method === 'POST') {
