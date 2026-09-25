@@ -10,7 +10,7 @@ const server = createServer(app.handler);
 server.requestTimeout = 30000;
 server.headersTimeout = 10000;
 server.listen(config.port, config.host, () => {
-  console.log(`MieMie Registry 0.3.2 listening at ${config.publicBaseUrl}`);
+  console.log(`MieMie Registry 0.4.0 listening at ${config.publicBaseUrl}`);
   if (!config.clientId || !config.clientSecret) console.log('Discord OAuth is not configured; public catalog is available, login fails safely.');
 });
 let stopping = false;

@@ -172,14 +172,14 @@ try {
     assert.equal((await a.client.api('/api/catalog/' + github.id)).submitter.displayName, profiles.A.displayName);
   });
   await record('Owner route contract can hide/restore and ban/unban without granting public identity access', async () => {
-    await admin.client.login(); assert.equal(admin.client.getIdentity().isAdmin, true);
+    await admin.client.login(); assert.equal(admin.client.getIdentity().isAdmin, true);assert.equal(admin.client.getIdentity().isOwner,true);assert.equal(admin.client.getIdentity().banned,false);
     const rows = await admin.client.api('/api/admin/submissions', {authenticated: true}); assert.ok(rows.items.some(item => item.ownerDiscordUserId === IDS.A));
     const moderate = action => admin.client.api('/api/admin/submissions/' + github.id + '/moderation', {method: 'POST', authenticated: true, body: {action, reason: 'Development Fixture moderation'}});
     await moderate('hide'); assert.equal((await a.client.api('/api/catalog')).total, 1);
     const own = (await a.client.api('/api/submissions', {authenticated: true})).items.find(item => item.id === github.id);
     assert.equal(own.status, 'listed'); assert.equal(own.moderation, 'hidden'); await moderate('restore');
     const ban = banned => admin.client.api('/api/admin/identities/' + IDS.A + '/ban', {method: 'POST', authenticated: true, body: {banned, reason: 'Development Fixture ban'}});
-    await ban(true); await assert.rejects(a.client.api('/api/submissions/' + github.id, {method: 'PATCH', body: {name: 'blocked'}, authenticated: true}), /禁止投稿/); await ban(false);
+    assert.equal(a.client.getIdentity().banned,false);await ban(true);await a.client.me();assert.equal(a.client.getIdentity().banned,true);await assert.rejects(a.client.api('/api/submissions/' + github.id, {method: 'PATCH', body: {name: 'blocked'}, authenticated: true}), /禁止投稿/); await ban(false);await a.client.me();assert.equal(a.client.getIdentity().banned,false);
   });
   await record('Owner-assigned identity reaches the real Hub client independently of Author and Submitter', async () => {
     assert.equal((await a.client.api('/api/catalog/'+github.id)).classification,'community');

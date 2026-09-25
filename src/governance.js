@@ -25,7 +25,7 @@ export function handleGovernance({path,method,body,auth,store,config,now,query})
     return {items:rows.map(row=>({...store.entryDTO(row,true),...(auth.isOwner?{ownerDiscordUserId:row.owner_id,submitterDiscordUserId:row.submitter_id,securityHold:!!row.security_hold,submitterBanned:!!store.getIdentity(row.owner_id).banned}:{})})),page,pageSize:50,total,hasMore:page*50<total};
   }
   if(path==='/api/admin/audit'&&method==='GET'){owner();return {...store.listAudit(page),page};}
-  if(path==='/api/admin/identities'&&method==='GET'){owner();return {...store.listIdentities(page),page};}
+  if(path==='/api/admin/identities'&&method==='GET'){owner();const result=store.listIdentities(page);return {...result,items:result.items.map(user=>({...user,...rolesFor(config,store,user)})),page};}
   const item=/^\/api\/admin\/submissions\/([^/]+)\/(moderation|protection|security-hold|classification)$/.exec(path);
   if(item&&method==='POST') {
     if(item[2]==='classification')owner();

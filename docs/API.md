@@ -124,3 +124,9 @@ PATCH 在最终写入事务中检查最新记录，项目不匹配返回 409 `of
 同一投稿者的重复来源会被拒绝；不同身份可以提交同一来源，不能据错误响应探测其他人的受限记录。数据库的 Catalog UUID 区分记录；没有“认证作者”推断。禁止恶意堆积由限流、每人总量和管理员治理处理。
 
 Discord API 不可达、限流或凭据过期时不使用旧的“成员”结果放行。服务器仅在当前 Session 的内存授权上下文中保存 access token；重启后已有数据库 Session 不能恢复 Discord 授权，客户端需重新登录。
+
+### 账号受限状态与治理控制台
+
+OAuth exchange/complete 和 `GET /api/me` 增量返回布尔字段 `banned`，表示当前认证账号是否受限；保留 `canSubmit`、`isAdmin`、`isOwner` 等兼容字段和全部服务端授权语义。账号显示优先级为 banned=true → 受限用户，否则 isAdmin=true → 管理员，否则普通用户。Owner 仍保留 isOwner=true，普通 Hub 界面显示管理员。旧 Registry 缺少 banned 时客户端不根据 canSubmit 猜测受限身份。
+
+Owner 的账号治理列表返回 isOwner/isAdmin 标志，供 UI 标注根身份保护；服务器仍独立拒绝修改 Owner。`/admin.css` 为公开静态样式，不含账号数据。治理列表中的操作先展示目标、稳定标识与原因输入；确认后才提交既有治理 API，取消不发送治理请求。
