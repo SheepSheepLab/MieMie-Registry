@@ -42,7 +42,7 @@ npm run backup
 - 匿名公开目录和登录后按 Guild 成员身份过滤的目录；分页、来源筛选、搜索及详情在服务端执行同一 ACL；公开 DTO 不包含 Discord User ID、Username、Email、Token、Session、封禁信息或管理员名单。
 - Discord Authorization Code 登录，只请求 `identify guilds`，不读取消息或邮箱。每次登录刷新显示名／Username／头像；Snowflake 是内部唯一身份和所有权主键。
 - 「我的」投稿、编辑、下架、重新上架；下架保留数据库记录。
-- Owner 私有根身份、数据库 Admin / Official Publisher 角色各自独立。Admin 仅 Hide/Recover Community；Owner 管理封禁、角色、保护和审计；任何角色不能编辑他人内容。详见 [Governance](docs/GOVERNANCE.md)。
+- Owner 私有根身份与数据库 Admin 角色独立。Admin 仅 Hide/Recover Community；Owner 管理官方/社区身份、封禁、角色、保护和审计；历史 Official Publisher 不再授予身份修改权；任何角色不能编辑他人内容。详见 [Governance](docs/GOVERNANCE.md)。
 - GitHub 公开仓库验证和 Manifest／Release 预填；机器安装兼容性只说明格式可识别，Hub 安装前还必须重新下载并完整校验。
 - 无需 Discord 登录的受限 GitHub 文件传输接口；只接受仓库、Release ID、Asset ID，服务端验证机器元数据后只能转发该元数据或其唯一安装包。不是任意 URL 代理；不会把 Registry 标成作品文件来源。Hub 收到字节后仍独立校验 Hash、版本和身份。
 - Discord 来源只保存 `discord.com/channels/...` 原帖，不保存临时附件下载地址。

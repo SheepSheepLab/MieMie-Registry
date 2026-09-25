@@ -62,7 +62,8 @@ export function submissionInput(body) {
   if(type==='web_tool'&&!website)fail(400,'invalid_website','Web Tool 必须填写网站地址');
   const platforms=body.platforms??[];
   if(!Array.isArray(platforms)||platforms.length>6||platforms.some(p=>!['windows','macos','linux','android','ios','web'].includes(p)))fail(400,'invalid_platforms','平台信息无效');
-  const classification=body.classification??'community';
+  // Legacy clients may echo this read-only value. The handler rejects changes.
+  const classification=Object.hasOwn(body,'classification') ? body.classification : 'community';
   if(!['community','official'].includes(classification))fail(400,'invalid_classification','身份分类无效');
   const tags = body.tags ?? [];
   if (!Array.isArray(tags) || tags.length > 8) fail(400, 'invalid_tags', '最多 8 个标签');

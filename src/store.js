@@ -4,6 +4,7 @@ import { DatabaseSync, backup } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import {canonicalClassification, projectIdentity, projectIdentityKey, assertOfficialProject} from './extension-identity.js';
 export function openStore(path) {
   if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   const db = new DatabaseSync(path);
@@ -72,8 +73,8 @@ export function openStore(path) {
   function profileDTO(identity) { return { displayName: identity.display_name, avatarUrl: identity.avatar_key ? `/api/avatars/${identity.avatar_key}` : null }; }
   function entryDTO(row, privateView = false) {
     const github = row.github_json ? JSON.parse(row.github_json) : null;
-    const dto = { id: row.id, visibility: row.visibility, extensionId: github?.manifest?.id || null, name: row.name, description: row.description, author: row.author, classification: row.classification, type: row.product_type, distribution: row.distribution, platforms: JSON.parse(row.platforms_json), websiteUrl: row.website_url, submitter: profileDTO(getIdentity(row.submitter_id)), sourceType: row.source_type, sourceUrl: row.source_url, icon: github?.manifest?.iconUrl || row.icon || null, tags: JSON.parse(row.tags_json), version: github?.release?.version || null, github, createdAt: new Date(row.created_at).toISOString(), updatedAt: new Date(row.updated_at).toISOString() };
-    if (privateView) Object.assign(dto, { status: row.owner_status, moderation: row.moderation, moderationReason: row.moderation_reason, visibilitySourceUrl: row.visibility_source_url, moderationProtected: !!row.moderation_protected, unlistedAt: row.unlisted_at, purgeAfter: row.purge_after });
+    const dto = { id: row.id, visibility: row.visibility, extensionId: github?.manifest?.id || null, name: row.name, description: row.description, author: row.author, classification: canonicalClassification(row.classification), type: row.product_type, distribution: row.distribution, platforms: JSON.parse(row.platforms_json), websiteUrl: row.website_url, submitter: profileDTO(getIdentity(row.submitter_id)), sourceType: row.source_type, sourceUrl: row.source_url, icon: github?.manifest?.iconUrl || row.icon || null, tags: JSON.parse(row.tags_json), version: github?.release?.version || null, github, createdAt: new Date(row.created_at).toISOString(), updatedAt: new Date(row.updated_at).toISOString() };
+    if (privateView) Object.assign(dto, { projectIdentityKey: projectIdentityKey(row), status: row.owner_status, moderation: row.moderation, moderationReason: row.moderation_reason, visibilitySourceUrl: row.visibility_source_url, moderationProtected: !!row.moderation_protected, unlistedAt: row.unlisted_at, purgeAfter: row.purge_after });
     return dto;
   }
   function audit(actor, action, target, reason, now, before = null, after = null) { db.prepare('INSERT INTO audit(actor_id,action,target_id,reason,created_at,before_json,after_json) VALUES(?,?,?,?,?,?,?)').run(actor, action, target, reason, now, before === null ? null : JSON.stringify(before), after === null ? null : JSON.stringify(after)); }
@@ -83,10 +84,11 @@ export function openStore(path) {
   const createSession = (hash,id,origin,expiresAt) => db.prepare('INSERT INTO sessions VALUES(?,?,?,?)').run(hash,id,origin,expiresAt);
   const deleteSession = hash => db.prepare('DELETE FROM sessions WHERE hash=?').run(hash);
   const expireSessions = time => db.prepare('DELETE FROM sessions WHERE expires_at<=?').run(time);
-  const getEntry = id => db.prepare('SELECT * FROM submissions WHERE id=?').get(id);
+  const canonicalRow = row => row ? {...row, classification:canonicalClassification(row.classification)} : row;
+  const getEntry = id => canonicalRow(db.prepare('SELECT * FROM submissions WHERE id=?').get(id));
   const sourceDuplicate = (url, ownerId, except='') => db.prepare('SELECT id FROM submissions WHERE source_url=? AND owner_id=? AND id<>?').get(url,ownerId,except);
   const countOwn = id => db.prepare('SELECT count(*) AS n FROM submissions WHERE owner_id=?').get(id).n;
-  const listOwn = id => db.prepare('SELECT * FROM submissions WHERE owner_id=? ORDER BY created_at DESC,id').all(id);
+  const listOwn = id => db.prepare('SELECT * FROM submissions WHERE owner_id=? ORDER BY created_at DESC,id').all(id).map(canonicalRow);
   const getAvatar = key => db.prepare('SELECT bytes,mime FROM avatars WHERE key=?').get(key);
   function listCatalog({page,pageSize,source,q,guildIds=[]}) {
     const params=[]; let where="owner_status='listed' AND moderation='visible'";
@@ -97,31 +99,55 @@ export function openStore(path) {
     if(q){where+=' AND (instr(lower(name),lower(?))>0 OR instr(lower(description),lower(?))>0 OR instr(lower(author),lower(?))>0)';params.push(q,q,q);}
     const total=db.prepare(`SELECT count(*) AS n FROM submissions WHERE ${where}`).get(...params).n;
     const rows=db.prepare(`SELECT * FROM submissions WHERE ${where} ORDER BY created_at DESC,id LIMIT ? OFFSET ?`).all(...params,pageSize,(page-1)*pageSize);
-    return {rows,total};
+    return {rows:rows.map(canonicalRow),total};
   }
   function insertSubmission({id,ownerId,input,github,time}) {
     db.prepare('INSERT INTO submissions(id,owner_id,name,description,author,source_type,source_url,icon,tags_json,github_json,created_at,updated_at,visibility,visibility_guild_id,visibility_source_url,discord_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(id,ownerId,input.name,input.description,input.author,input.sourceType,input.sourceUrl,input.icon,JSON.stringify(input.tags),github?JSON.stringify(github):null,time,time,input.visibility||'public',input.visibilityGuildId||null,input.visibilitySourceUrl||null,input.discord?JSON.stringify(input.discord):null);
-    db.prepare('UPDATE submissions SET submitter_id=?,classification=?,moderation_protected=? WHERE id=?').run(ownerId,input.classification||'community',input.classification==='official'?1:0,id);
+    // Identity is assigned only by governance; never copy it from submission input.
+    db.prepare('UPDATE submissions SET submitter_id=? WHERE id=?').run(ownerId,id);
     setProduct(id,input);
   }
   function updateSubmission({id,input,github,time}) {
+    // The caller holds BEGIN IMMEDIATE; compare with the latest accepted project.
+    const current = getEntry(id);
+    assertOfficialProject(current, {...current, source_type:input.sourceType, source_url:input.sourceUrl, product_type:input.type, website_url:input.websiteUrl, github_json:github ? JSON.stringify(github) : null});
     db.prepare('UPDATE submissions SET name=?,description=?,author=?,source_type=?,source_url=?,icon=?,tags_json=?,github_json=?,updated_at=?,visibility=?,visibility_guild_id=?,visibility_source_url=?,discord_json=? WHERE id=?').run(input.name,input.description,input.author,input.sourceType,input.sourceUrl,input.icon,JSON.stringify(input.tags),github?JSON.stringify(github):null,time,input.visibility,input.visibilityGuildId,input.visibilitySourceUrl,input.discord?JSON.stringify(input.discord):null,id);
     setProduct(id,input);
   }
   function setProduct(id,input) {
     db.prepare('UPDATE submissions SET product_type=?,distribution=?,platforms_json=?,website_url=? WHERE id=?').run(input.type||'tavern_extension',input.distribution||(input.sourceType==='discord'?'open_url':'external_release'),JSON.stringify(input.platforms||[]),input.websiteUrl||null,id);
-    const current=getEntry(id);
-    // Publishing Official enables protection by default. Returning to Community
-    // must not revoke a governance decision: only the Owner protection endpoint
-    // may remove protection (including protection set while validation awaited).
-    if (input.classification && input.classification !== current.classification) db.prepare('UPDATE submissions SET classification=?,moderation_protected=? WHERE id=?').run(input.classification,input.classification==='official'?1:current.moderation_protected,id);
+  }
+  // Only called by Owner governance. A downgrade cannot remove Owner protection.
+  function setClassification(id,value,time) {
+    if(!['community','official'].includes(value))throw Error('Invalid extension identity');
+    db.prepare("UPDATE submissions SET classification=?,moderation_protected=CASE WHEN ?='official' AND classification IS NOT 'official' THEN 1 ELSE moderation_protected END,updated_at=? WHERE id=?").run(value,value,time,id);
   }
   // Cache refresh must never overwrite edits, ownership, ACL or moderation.
-  const refreshGithub = (row, github) => db.prepare("UPDATE submissions SET github_json=? WHERE id=? AND source_type='github' AND source_url=? AND github_json IS ?").run(JSON.stringify(github),row.id,row.source_url,row.github_json);
+  function refreshGithub(row, github, time = Date.now()) {
+    return transaction(() => {
+      const current = getEntry(row.id);
+      if (!current || current.source_type !== 'github' || current.source_url !== row.source_url || current.github_json !== row.github_json) return {changes:0};
+      const candidate = {...current, github_json:JSON.stringify(github)};
+      try { assertOfficialProject(current, candidate); }
+      catch (error) {
+        if (error.code !== 'official_project_identity_mismatch') throw error;
+        const before = projectIdentity(current), attempted = projectIdentity(candidate);
+        // Repeated reads of the same rejected cache entry need only one audit record.
+        const last = db.prepare("SELECT before_json,after_json FROM audit WHERE target_id=? AND action='project_identity_mismatch' ORDER BY id DESC LIMIT 1").get(row.id);
+        if (last?.before_json !== JSON.stringify(before) || last?.after_json !== JSON.stringify({attempted})) {
+          audit('server-refresh','project_identity_mismatch',row.id,error.code,time,before,{attempted});
+        }
+        return {changes:0, conflict:error.code};
+      }
+      const previous = current.github_json ? JSON.parse(current.github_json) : null;
+      if (github.compatibility !== 'installable' && previous?.compatibility === 'installable') return {changes:0};
+      return db.prepare('UPDATE submissions SET github_json=? WHERE id=?').run(candidate.github_json,row.id);
+    });
+  }
   const setOwnerStatus=(id,status,time)=>db.prepare("UPDATE submissions SET owner_status=?,updated_at=?,unlisted_at=CASE WHEN ?='listed' THEN NULL ELSE COALESCE(unlisted_at,?) END,purge_after=CASE WHEN ?='listed' THEN NULL ELSE COALESCE(purge_after,?) END WHERE id=?").run(status,time,status,time,status,time+180*86400000,id);
   function listAdmin(page, owner=false) {
-    const where=owner?'1=1':"classification='community' AND moderation_protected=0";
-    return {total:db.prepare(`SELECT count(*) AS n FROM submissions WHERE ${where}`).get().n, rows:db.prepare(`SELECT * FROM submissions WHERE ${where} ORDER BY created_at DESC,id LIMIT 50 OFFSET ?`).all((page-1)*50)};
+    const where=owner?'1=1':"classification IS NOT 'official' AND moderation_protected=0";
+    return {total:db.prepare(`SELECT count(*) AS n FROM submissions WHERE ${where}`).get().n, rows:db.prepare(`SELECT * FROM submissions WHERE ${where} ORDER BY created_at DESC,id LIMIT 50 OFFSET ?`).all((page-1)*50).map(canonicalRow)};
   }
   const rolesFor=id=>db.prepare('SELECT role FROM roles WHERE discord_id=?').all(id).map(r=>r.role);
   const setRole=(id,role,enabled)=>enabled?db.prepare('INSERT OR IGNORE INTO roles VALUES(?,?)').run(id,role):db.prepare('DELETE FROM roles WHERE discord_id=? AND role=?').run(id,role);
@@ -138,5 +164,5 @@ export function openStore(path) {
   function purge(time) {return transaction(()=>{const rows=purgeEligible(time);for(const row of rows){const prior=getEntry(row.id);db.prepare('DELETE FROM submissions WHERE id=?').run(row.id);audit('server-cleanup','purge',row.id,'retention elapsed',time,{status:'unlisted',submitterId:prior.submitter_id,ownerId:prior.owner_id,source:prior.source_url},null);}return rows.length;});}
   const setModeration=(id,status,reason,time)=>db.prepare('UPDATE submissions SET moderation=?,moderation_reason=?,updated_at=? WHERE id=?').run(status,reason,time,id);
   const setBanned=(id,banned)=>db.prepare('UPDATE identities SET banned=? WHERE discord_id=?').run(banned?1:0,id);
-  return { db, rolesFor,setRole,bootstrapAdmins,listIdentities,listAudit,setProtection,setHold,purgeEligible,purge, getIdentity, upsertIdentity, profileDTO, entryDTO, audit, transaction,sessionByHash,createSession,deleteSession,expireSessions,getEntry,sourceDuplicate,countOwn,listOwn,getAvatar,listCatalog,insertSubmission,updateSubmission,refreshGithub,setOwnerStatus,listAdmin,setModeration,setBanned,close:()=>db.close(),backup:destination=>backup(db,destination) };
+  return { db, setClassification, rolesFor,setRole,bootstrapAdmins,listIdentities,listAudit,setProtection,setHold,purgeEligible,purge, getIdentity, upsertIdentity, profileDTO, entryDTO, audit, transaction,sessionByHash,createSession,deleteSession,expireSessions,getEntry,sourceDuplicate,countOwn,listOwn,getAvatar,listCatalog,insertSubmission,updateSubmission,refreshGithub,setOwnerStatus,listAdmin,setModeration,setBanned,close:()=>db.close(),backup:destination=>backup(db,destination) };
 }

@@ -23,21 +23,21 @@ test('moderator can only Hide/Recover Community; no bans, roles, audit or author
  for(const actor of [admin,owner]){assert.equal((await f.req(`/api/submissions/${row.id}`,{method:'PATCH',token:actor.token,body:{name:'stolen'}})).status,404);assert.equal((await f.req(`/api/admin/submissions/${row.id}`,{method:'PATCH',token:actor.token,body:{name:'stolen'}})).status,404);}
  assert.equal(f.store.getEntry(row.id).name,row.name);
 });
-test('Author spoof cannot confer Official; trusted publisher is independent of Admin',async t=>{
+test('Author spoof and legacy publisher grants cannot confer Official or Admin',async t=>{
  const f=await fixture(t),a=await f.login(),owner=await f.login('OWNER');
  const normal=await create(f,a,{author:'SheepSheep'});assert.equal(normal.classification,'community');
- assert.equal((await f.req('/api/submissions',{method:'POST',token:a.token,body:submission({sourceUrl:'https://github.com/example/official',classification:'official'})})).status,403);
  assert.equal((await grant(f,owner,IDS.A,'official_publisher')).status,200);
- assert.equal((await f.req('/api/me',{token:a.token})).data.canPublishOfficial,true);
+ assert.equal((await f.req('/api/me',{token:a.token})).data.canPublishOfficial,false);
  assert.equal((await f.req('/api/admin/submissions',{token:a.token})).status,403);
- const official=await create(f,a,{sourceUrl:'https://github.com/example/official',classification:'official'});assert.equal(official.moderationProtected,true);
- assert.equal((await f.req(`/api/submissions/${normal.id}`,{method:'PATCH',token:a.token,body:{classification:'official'}})).status,200);
- const logs=f.store.listAudit(1).items;assert.ok(logs.some(x=>x.action==='classification'&&x.before_json&&x.after_json));
+ assert.equal((await f.req('/api/submissions',{method:'POST',token:a.token,body:submission({sourceUrl:'https://github.com/example/official',classification:'official'})})).status,403);
+ assert.equal((await f.req(`/api/submissions/${normal.id}`,{method:'PATCH',token:a.token,body:{classification:'official'}})).status,403);
  assert.equal((await grant(f,owner,IDS.A,'admin')).status,200);assert.deepEqual(f.store.rolesFor(IDS.A).sort(),['admin','official_publisher']);
+ assert.equal((await f.req('/api/me',{token:a.token})).data.canPublishOfficial,false);
  assert.equal((await grant(f,owner,IDS.A,'admin',false)).status,200);assert.equal((await f.req('/api/me',{token:a.token})).data.isAdmin,false);
 });
 test('Official protection and Security Hold are Owner only; Owner identity is immutable',async t=>{
- const f=await fixture(t),owner=await f.login('OWNER'),admin=await f.login('ADMIN');const row=await create(f,owner,{classification:'official'});
+ const f=await fixture(t),owner=await f.login('OWNER'),admin=await f.login('ADMIN');const row=await create(f,owner);
+ await mutate(f,owner,`/api/admin/submissions/${row.id}/classification`,{classification:'official',projectIdentityKey:row.projectIdentityKey});
  for(const action of ['hide','restore'])assert.equal((await mutate(f,admin,`/api/admin/submissions/${row.id}/moderation`,{action})).status,403);
  for(const action of ['protection','security-hold']){assert.equal((await mutate(f,admin,`/api/admin/submissions/${row.id}/${action}`,{enabled:false})).status,403);assert.equal((await mutate(f,owner,`/api/admin/submissions/${row.id}/${action}`,{enabled:true})).status,200);}
  assert.equal((await f.req('/api/admin/submissions',{token:admin.token})).data.total,0);
