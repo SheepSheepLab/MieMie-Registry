@@ -5,7 +5,7 @@ import { fail, plain, text, submissionInput } from './validation.js';
 import { createDiscordAdapter, createGitHubAdapter } from './remote.js';
 import { createGitHubRelay, createHubReleaseRelay } from './github-relay.js';
 import {rolesFor,validateProduct,handleGovernance} from './governance.js';
-import {adminPage,adminScript} from './admin.js';
+import {adminPage,adminScript,adminStyle} from './admin.js';
 const random = () => randomBytes(32).toString('base64url');
 const sha = value => createHash('sha256').update(value).digest('base64url');
 const safeEqual = (a, b) => typeof a === 'string' && typeof b === 'string' && Buffer.byteLength(a) === Buffer.byteLength(b) && timingSafeEqual(Buffer.from(a), Buffer.from(b));
@@ -105,7 +105,7 @@ export function createApp({ config, store, discord = createDiscordAdapter(config
     sessionCredentials.set(tokenHash(token), { accessToken: bridge.credentials.accessToken, expiresAt });
     // Both delivery paths consume the same one-use result, synchronously.
     bridges.delete(key); handoffs.delete(bridge.requestId);
-    return { token, expiresAt: new Date(expiresAt).toISOString(), profile: store.profileDTO(user), ...rolesFor(config,store,user), canSubmit: !user.banned };
+    return { token, expiresAt: new Date(expiresAt).toISOString(), profile: store.profileDTO(user), ...rolesFor(config,store,user), banned: !!user.banned, canSubmit: !user.banned };
   }
   function send(res, status, value) { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(value)); }
   const handler = async (req, res) => {
@@ -123,11 +123,12 @@ export function createApp({ config, store, discord = createDiscordAdapter(config
       if (method === 'OPTIONS') { res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, OPTIONS'); res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type'); res.setHeader('Access-Control-Max-Age', '600'); res.writeHead(204); res.end(); return; }
       if (!['GET', 'POST', 'PATCH'].includes(method)) fail(405, 'method_not_allowed', '不支持此请求');
       if (method !== 'GET' && (!origin || !config.allowedOrigins.has(origin))) fail(403, 'origin_required', '写入请求必须来自已配置页面');
-      if (path === '/health' && method === 'GET') {if(store.db.prepare('PRAGMA user_version').get().user_version!==3)throw Error('schema');store.db.prepare('SELECT id FROM submissions LIMIT 1').get();return send(res, 200, { status: 'ok', version: '0.3.2' });}
+      if (path === '/health' && method === 'GET') {if(store.db.prepare('PRAGMA user_version').get().user_version!==3)throw Error('schema');store.db.prepare('SELECT id FROM submissions LIMIT 1').get();return send(res, 200, { status: 'ok', version: '0.4.0' });}
       if(path==='/admin'&&method==='GET') {
-        res.setHeader('Content-Security-Policy',"default-src 'none'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'");
+        res.setHeader('Content-Security-Policy',"default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'");
         res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'});res.end(adminPage);return;
       }
+      if(path==='/admin.css'&&method==='GET') {res.writeHead(200,{'Content-Type':'text/css; charset=utf-8'});res.end(adminStyle);return;}
       if(path==='/admin.js'&&method==='GET') {res.writeHead(200,{'Content-Type':'text/javascript; charset=utf-8'});res.end(adminScript);return;}
       if (path === '/' && method === 'GET') { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); res.end('<!doctype html><meta charset="utf-8"><title>MieMie Registry</title><h1>MieMie Registry</h1><p>目录和 Discord 投稿服务。请从 MieMie Hub 扩展中心连接。</p><p>投稿默认上架，不代表安全审核或作者认证。</p>'); return; }
       if (path === '/api/auth/start' && method === 'POST') {
@@ -188,7 +189,7 @@ export function createApp({ config, store, discord = createDiscordAdapter(config
         if (!bridge || bridge.expiresAt <= now() || bridge.origin !== origin || bridge.requestId !== body.requestId || !safeEqual(bridge.challenge, sha(body.codeVerifier))) fail(400, 'invalid_bridge', '登录确认无效或已使用');
         return send(res, 200, completeSession(key, bridge));
       }
-      if (path === '/api/me' && method === 'GET') { const auth = authenticate(req); return send(res, 200, { profile: store.profileDTO(auth.user), isAdmin: auth.isAdmin, isOwner: auth.isOwner, canPublishOfficial: auth.canPublishOfficial, canSubmit: !auth.user.banned }); }
+      if (path === '/api/me' && method === 'GET') { const auth = authenticate(req); return send(res, 200, { profile: store.profileDTO(auth.user), isAdmin: auth.isAdmin, isOwner: auth.isOwner, canPublishOfficial: auth.canPublishOfficial, banned: !!auth.user.banned, canSubmit: !auth.user.banned }); }
       if (path === '/api/auth/logout' && method === 'POST') { const auth = authenticate(req); store.deleteSession(auth.session.hash); sessionCredentials.delete(auth.session.hash); return send(res, 200, { ok: true }); }
       if (path.startsWith('/api/avatars/') && method === 'GET') {
         const key = path.slice('/api/avatars/'.length); if (!/^[a-f0-9-]{36}$/.test(key)) fail(404, 'not_found', '头像不存在');

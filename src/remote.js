@@ -61,7 +61,7 @@ export function cleanManifest(value, repository, expectedVersion, ref = 'HEAD') 
   return manifest;
 }
 export function createGitHubAdapter({ fetchImpl = fetch } = {}) {
-  const apiHeaders = { Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'MieMie-Registry/0.3.2' };
+  const apiHeaders = { Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'MieMie-Registry/0.4.0' };
   async function json(url, limit = 1048576) { return parseJSON((await boundedFetch(fetchImpl, url, { headers: apiHeaders, limit })).bytes); }
   async function inspect(repoUrl) {
     let repo = githubRepo(repoUrl), base = `https://api.github.com/repos/${repo.owner}/${repo.repo}`;

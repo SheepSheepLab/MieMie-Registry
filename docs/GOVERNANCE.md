@@ -1,4 +1,4 @@
-# Governance v1 / Registry 0.3.2
+# Governance v1 / Registry 0.4.0
 
 角色可以叠加；每个请求从服务端重新判断，客户端角色显示不是授权。
 
