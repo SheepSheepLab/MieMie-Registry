@@ -92,6 +92,7 @@ OAuth Secret、Discord Token、verifier 和 Registry 会话不写 URL 或持久�
 
 - `GET /api/admin/submissions?page=1`：Admin 仅未保护 Community，Owner 全部；只有 Owner 响应含内部身份追溯字段。
 - `POST /api/admin/submissions/:id/moderation {action:"hide"|"restore",reason}`：Admin 限 Community；Owner 任意。
+- `POST /api/admin/submissions/:id/classification {classification:"official"|"community",reason,projectIdentityKey}`：仅 Owner；身份切换及审计原子提交，降级保留保护。设置 official 必须回传管理列表当前卡片的 `projectIdentityKey`；缺失或项目快照已变化返回 409 `project_changed`，刷新并重新核对后再授权。该字段是服务端从项目定位字段派生的校验值，不是权限凭证或新的身份字段。
 - `POST /api/admin/submissions/:id/protection {enabled,reason}`：Owner only。
 - `POST /api/admin/submissions/:id/security-hold {enabled,reason}`：Owner only。
 - `POST /api/admin/identities/:discordId/ban {banned,reason}`：Owner only。
@@ -100,7 +101,13 @@ OAuth Secret、Discord Token、verifier 和 Registry 会话不写 URL 或持久�
 
 治理写入原因必填（1–500 字符）；无编辑他人内容、变更 Owner 根身份的接口。Recover 不覆盖投稿者的 Soft Unlist。
 
-投稿另支持 `classification`（默认 community；official 要求可信角色）、`type`、`distribution`、`platforms`、`websiteUrl`。Public DTO 返回这些展示字段，不返回 submitter/owner ID、Hold、Retention 或审计。
+投稿支持 `type`、`distribution`、`platforms`、`websiteUrl`。`classification` 是平台赋予的扩展身份，所有新投稿均为 community；POST 请求 official 拒绝，PATCH 只允许回传原值，不能修改身份。所有角色（含 Owner）修改身份都必须使用上述治理接口。未知/内部字段（如 `official:true`、`submitted_by`）被拒绝。
+
+Public DTO 返回 `classification:"official"|"community"`，与 `author`、认证账户的公开 `submitter` profile 独立；不返回 submitter/owner ID、Hold、Retention 或审计。旧记录缺失或非法值在 Store、Catalog、普通编辑、治理和 Admin 列表中统一按 community；客户端显式传入非法 classification（包括 null）仍返回 400 `invalid_classification`；普通 Manifest 的同名字段不具备身份权威。`canPublishOfficial` 为兼容保留，仅 Owner 为 true；历史 `official_publisher` 角色不再获得任何身份修改权。
+
+Official 投稿的项目定位字段不可直接变更，Owner 编辑本人内容也一样：sourceType、规范化 sourceUrl、产品 type、websiteUrl、GitHub owner/repo、Manifest id/repository。必须先由 Owner 降为 community，再修改项目，最后重新确认 official。版本、名称、作者、简介等内容维护不视为项目身份变化，分发方式仍是独立维度。
+
+PATCH 在最终写入事务中检查最新记录，项目不匹配返回 409 `official_project_identity_mismatch`，不更新内容或自动降级。Catalog 自动 refresh 使用同一检查，冲突时保留已接纳记录并写入 Owner 可见的 `project_identity_mismatch` 审计（actor=`server-refresh`，含原项目和 attempted 项目）；Catalog 仍可读取最后接受的记录。相同冲突不重复写审计。普通 refresh 只更新 GitHub 缓存，不覆盖身份、保护、Hold 或 moderation。
 
 ### 0.1.2 GitHub 配额错误
 

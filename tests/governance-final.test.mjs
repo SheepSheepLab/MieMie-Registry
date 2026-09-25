@@ -8,39 +8,46 @@ const create = async (f, actor, overrides = {}) => {
   return result.data;
 };
 const govern = (f, actor, path, body) => f.req('/api/admin/' + path, {
-  method:'POST', token:actor.token, body:{reason:'Development Fixture final acceptance', ...body},
+  method:'POST', token:actor.token, body:{reason:'Development Fixture final acceptance', ...(body.classification==='official'?{projectIdentityKey:f.store.entryDTO(f.store.getEntry(path.split('/')[1]),true).projectIdentityKey}:{}), ...body},
 });
 
-test('author classification downgrade cannot clear Owner moderation protection', async t => {
+test('author downgrade is refused and Owner downgrade cannot clear moderation protection', async t => {
   const f = await fixture(t), author = await f.login(), owner = await f.login('OWNER'), admin = await f.login('ADMIN');
   await govern(f, owner, `identities/${IDS.A}/roles`, {role:'official_publisher', enabled:true});
-  const row = await create(f, author, {classification:'official'});
+  const row = await create(f, author);
+  await govern(f, owner, `submissions/${row.id}/classification`, {classification:'official'});
   await govern(f, owner, `submissions/${row.id}/protection`, {enabled:true});
   const edited = await f.req(`/api/submissions/${row.id}`, {method:'PATCH', token:author.token, body:{classification:'community'}});
-  assert.equal(edited.status, 200);
+  assert.equal(edited.status, 403);
+  assert.equal(f.store.getEntry(row.id).classification, 'official');
+  assert.equal((await govern(f, owner, `submissions/${row.id}/classification`, {classification:'community'})).status, 200);
   assert.equal(f.store.getEntry(row.id).moderation_protected, 1, 'author edit must preserve Owner protection');
   assert.equal((await govern(f, admin, `submissions/${row.id}/moderation`, {action:'hide'})).status, 403);
   assert.equal((await govern(f, owner, `submissions/${row.id}/protection`, {enabled:false})).status, 200);
   assert.equal((await govern(f, admin, `submissions/${row.id}/moderation`, {action:'hide'})).status, 200);
 });
 
-test('classification edits preserve the latest Owner protection and hold during source validation', async t => {
+test('content edits preserve the latest Owner identity, protection and hold during source validation', async t => {
   let pause = false, release, started;
   const gate = new Promise(resolve => release = resolve), ready = new Promise(resolve => started = resolve);
   const f = await fixture(t, {beforeInspect:async () => {if (pause) {started(); await gate;}}});
   const author = await f.login(), owner = await f.login('OWNER');
   await govern(f, owner, `identities/${IDS.A}/roles`, {role:'official_publisher', enabled:true});
-  const row = await create(f, author, {classification:'official'});
+  const row = await create(f, author);
+  await govern(f, owner, `submissions/${row.id}/classification`, {classification:'official'});
   await govern(f, owner, `submissions/${row.id}/protection`, {enabled:false});
   pause = true;
   const pending = f.req(`/api/submissions/${row.id}`, {method:'PATCH', token:author.token,
-    body:{classification:'community', sourceUrl:'https://github.com/example/revalidated'}});
+    body:{description:'Edited content', sourceUrl:'https://github.com/example/revalidated'}});
   await ready;
   await govern(f, owner, `submissions/${row.id}/protection`, {enabled:true});
   await govern(f, owner, `submissions/${row.id}/security-hold`, {enabled:true});
+  await govern(f, owner, `submissions/${row.id}/classification`, {classification:'community'});
   release();
   assert.equal((await pending).status, 200);
   const saved = f.store.getEntry(row.id);
+  assert.equal(saved.classification, 'community');
+  assert.equal(saved.description, 'Edited content');
   assert.equal(saved.moderation_protected, 1);
   assert.equal(saved.security_hold, 1);
   assert.equal(saved.owner_id, IDS.A);
@@ -98,7 +105,7 @@ test('Owner role grant/revoke, ban/unban, protection and hold have complete cred
   for (const role of ['admin','official_publisher']) for (const enabled of [true,false]) {
     assert.equal((await govern(f, owner, `identities/${IDS.A}/roles`, {role,enabled})).status, 200);
     const me = (await f.req('/api/me', {token:a.token})).data;
-    assert.equal(role === 'admin' ? me.isAdmin : me.canPublishOfficial, enabled);
+    assert.equal(role === 'admin' ? me.isAdmin : me.canPublishOfficial, role === 'admin' && enabled);
   }
   for (const banned of [true,false]) assert.equal((await govern(f, owner, `identities/${IDS.A}/ban`, {banned})).status, 200);
   for (const action of ['hide','restore']) await govern(f, owner, `submissions/${row.id}/moderation`, {action});

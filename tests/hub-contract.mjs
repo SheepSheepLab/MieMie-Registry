@@ -181,6 +181,23 @@ try {
     const ban = banned => admin.client.api('/api/admin/identities/' + IDS.A + '/ban', {method: 'POST', authenticated: true, body: {banned, reason: 'Development Fixture ban'}});
     await ban(true); await assert.rejects(a.client.api('/api/submissions/' + github.id, {method: 'PATCH', body: {name: 'blocked'}, authenticated: true}), /禁止投稿/); await ban(false);
   });
+  await record('Owner-assigned identity reaches the real Hub client independently of Author and Submitter', async () => {
+    assert.equal((await a.client.api('/api/catalog/'+github.id)).classification,'community');
+    const classify=async classification=>{
+      const rows=await admin.client.api('/api/admin/submissions',{authenticated:true});
+      return admin.client.api('/api/admin/submissions/'+github.id+'/classification',{
+        method:'POST',authenticated:true,body:{classification,projectIdentityKey:rows.items.find(x=>x.id===github.id).projectIdentityKey,reason:'Development Fixture identity assignment'}});
+    };
+    await assert.rejects(a.client.api('/api/submissions/'+github.id,{method:'PATCH',authenticated:true,body:{classification:'official'}}),/Owner/);
+    for(const classification of ['official','community']){
+      await classify(classification);
+      const entry=(await a.client.api('/api/catalog')).items.find(x=>x.id===github.id);
+      assert.equal(entry.classification,classification);
+      assert.equal(entry.author,'Actual Work Author');
+      assert.equal(entry.submitter.displayName,profiles.A.displayName);
+      assert.equal((await a.client.api('/api/catalog/'+github.id)).classification,classification);
+    }
+  });
   await record('Guild Catalog ACL filters actual Hub member, anonymous and nonmember list/detail/search/count', async () => {
     const restricted = await a.client.api('/api/submissions', {method:'POST', authenticated:true, body:submit({name:'Secret ACL Fixture', sourceType:'discord', sourceUrl:`https://discord.com/channels/${GUILD}/755555555555555555/777777777777777777`, visibility:'discord_guild'})});
     const member = await a.client.api('/api/catalog?q=Secret&pageSize=1', {authenticated:true});

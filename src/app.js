@@ -4,7 +4,7 @@ import { randomBytes, randomUUID, createHash, createHmac, timingSafeEqual } from
 import { fail, plain, text, submissionInput } from './validation.js';
 import { createDiscordAdapter, createGitHubAdapter } from './remote.js';
 import { createGitHubRelay, createHubReleaseRelay } from './github-relay.js';
-import {rolesFor,validateProduct,handleGovernance,moderationSnapshot} from './governance.js';
+import {rolesFor,validateProduct,handleGovernance} from './governance.js';
 import {adminPage,adminScript} from './admin.js';
 const random = () => randomBytes(32).toString('base64url');
 const sha = value => createHash('sha256').update(value).digest('base64url');
@@ -90,8 +90,7 @@ export function createApp({ config, store, discord = createDiscordAdapter(config
         cached = {promise, until: now() + catalogRefreshTtlMs}; catalogRefresh.set(key, cached);
       }
       return cached.promise.then(result => {
-        const previous = row.github_json ? JSON.parse(row.github_json) : null;
-        if (result && (result.compatibility === 'installable' || previous?.compatibility !== 'installable')) store.refreshGithub(row, result);
+        if (result) store.refreshGithub(row, result, now());
       }).catch(() => {});
     });
     let timer;
@@ -239,9 +238,9 @@ export function createApp({ config, store, discord = createDiscordAdapter(config
         const discovered = input.sourceType === 'github' ? await inspect(input.sourceUrl) : null, id = randomUUID(), time = now();
         if(body.distribution===undefined&&input.type==='tavern_extension'&&discovered?.compatibility==='installable')input.distribution='managed_install';
         await validateVisibility(input, auth);
-        const refreshed=authenticate(req);canSubmit(refreshed.user);validateProduct(input,discovered,refreshed);
+        const refreshed=authenticate(req);canSubmit(refreshed.user);validateProduct(input,discovered);
         if (store.sourceDuplicate(input.sourceUrl, user.discord_id)) fail(409, 'duplicate_submission', '你已提交过该来源，可在我的投稿中编辑');
-        store.transaction(() => { store.insertSubmission({id,ownerId:user.discord_id,input,github:discovered,time}); store.audit(user.discord_id,'create',id,'',time,null,{submitterId:user.discord_id,ownerId:user.discord_id,classification:input.classification});if(input.classification==='official')store.audit(user.discord_id,'classification',id,'official submission',time,{classification:null},moderationSnapshot(entry(id))); });
+        store.transaction(() => { store.insertSubmission({id,ownerId:user.discord_id,input,github:discovered,time}); store.audit(user.discord_id,'create',id,'',time,null,{submitterId:user.discord_id,ownerId:user.discord_id,classification:'community'}); });
         return send(res, 201, store.entryDTO(entry(id), true));
       }
       const ownMatch = /^\/api\/submissions\/([^/]+)(?:\/(status))?$/.exec(path);
@@ -257,16 +256,12 @@ export function createApp({ config, store, discord = createDiscordAdapter(config
           // Always revalidate source. Never carry version/hash information into another repo.
           const discovered = input.sourceType === 'github' ? await inspect(input.sourceUrl, input.sourceUrl !== row.source_url) : null, time = now();
           await validateVisibility(input, auth);
-          const refreshed=authenticate(req);canSubmit(refreshed.user);own(row.id,user);validateProduct(input,discovered,refreshed,row);
+          const refreshed=authenticate(req);canSubmit(refreshed.user);own(row.id,user);validateProduct(input,discovered,row);
           if (store.sourceDuplicate(input.sourceUrl, user.discord_id, row.id)) fail(409, 'duplicate_submission', '你已提交过该来源，可在我的投稿中编辑');
           store.transaction(() => {
-            // Source validation may await network I/O while Owner governance changes.
-            const before = entry(row.id);
+            // Content writes never overwrite identity, protection or hold after network I/O.
             store.updateSubmission({id:row.id,input,github:discovered,time});
             store.audit(user.discord_id,'edit',row.id,'',time);
-            if (before.classification !== input.classification) {
-              store.audit(user.discord_id,'classification',row.id,'submitter classification change',time,moderationSnapshot(before),moderationSnapshot(entry(row.id)));
-            }
           });
           return send(res, 200, store.entryDTO(entry(row.id), true));
         }

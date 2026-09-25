@@ -41,10 +41,11 @@ function consoleApp() {
   const reasonInput=parent=>{const label=el('label','操作原因（必填）'),input=el('input');input.maxLength=500;label.append(input);parent.append(label);return input;};
   async function submissions(page){
     const {data}=await api('/api/admin/submissions?page='+page),v=view();
-    for(const row of data.items){const card=el('article');card.append(el('h2',row.name),el('p',`${row.classification} · ${row.status} · ${row.moderation} · 作者：${row.author}`),el('p',row.description));
+    for(const row of data.items){const card=el('article');card.dataset.submissionId=row.id;card.append(el('h2',row.name),el('p',`${row.classification==='official'?'🐑官方扩展':'🧩社区扩展'} · ${row.status} · ${row.moderation} · 作者：${row.author}`),el('p',row.description));
+      card.append(el('p','Source / Repository：'+row.sourceUrl),el('p','Extension ID：'+(row.extensionId||'未提供')+(row.websiteUrl?' · Website：'+row.websiteUrl:'')),el('p','Submitter：'+row.submitter.displayName+(row.submitterDiscordUserId?' ('+row.submitterDiscordUserId+')':'')),el('p','Submission ID：'+row.id));
       const reason=reasonInput(card),base='/api/admin/submissions/'+encodeURIComponent(row.id);
       for(const [action,label] of [['hide','Hide'],['restore','Recover']])button(card,label,async()=>{await api(base+'/moderation',{action,reason:reason.value});await submissions(page);});
-      if(identity.isOwner){for(const [path,value,label] of [['protection',row.moderationProtected,'保护'],['security-hold',row.securityHold,'Security Hold']])button(card,(value?'解除':'设置')+label,async()=>{await api(base+'/'+path,{enabled:!value,reason:reason.value});await submissions(page);});}
+      if(identity.isOwner){button(card,row.classification==='official'?'设为🧩社区扩展':'设为🐑官方扩展',async()=>{await api(base+'/classification',{classification:row.classification==='official'?'community':'official',projectIdentityKey:row.projectIdentityKey,reason:reason.value});await submissions(page);});for(const [path,value,label] of [['protection',row.moderationProtected,'保护'],['security-hold',row.securityHold,'Security Hold']])button(card,(value?'解除':'设置')+label,async()=>{await api(base+'/'+path,{enabled:!value,reason:reason.value});await submissions(page);});}
       v.append(card);
     }paging(v,page,data.total,submissions);
   }
@@ -52,7 +53,7 @@ function consoleApp() {
     const {data}=await api('/api/admin/identities?page='+page),v=view();
     for(const user of data.items){const card=el('article');card.append(el('h2',user.display_name),el('p',user.discord_id+' · '+user.roles.join(', ')));const reason=reasonInput(card),base='/api/admin/identities/'+user.discord_id;
       button(card,user.banned?'Unban':'Ban',async()=>{await api(base+'/ban',{banned:!user.banned,reason:reason.value});await users(page);});
-      for(const role of ['admin','official_publisher']){const enabled=user.roles.includes(role);button(card,(enabled?'撤销 ':'授予 ')+role,async()=>{await api(base+'/roles',{role,enabled:!enabled,reason:reason.value});await users(page);});}v.append(card);
+      for(const role of ['admin','official_publisher']){const enabled=user.roles.includes(role);if(role==='official_publisher'&&!enabled)continue;button(card,(enabled?'撤销 ':'授予 ')+role,async()=>{await api(base+'/roles',{role,enabled:!enabled,reason:reason.value});await users(page);});}v.append(card);
     }paging(v,page,data.total,users);
   }
   async function audit(page){const {data}=await api('/api/admin/audit?page='+page),v=view();for(const row of data.items)v.append(el('pre',JSON.stringify(row,null,2)));paging(v,page,data.total,audit);}

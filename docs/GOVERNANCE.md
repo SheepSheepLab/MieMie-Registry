@@ -2,19 +2,41 @@
 
 角色可以叠加；每个请求从服务端重新判断，客户端角色显示不是授权。
 
-| 能力 | Submitter | Official Publisher | Admin | Owner |
+| 能力 | Submitter | Legacy Official Publisher | Admin | Owner |
 |---|---|---|---|---|
 | 投稿、编辑本人内容、Soft Unlist/Relist | 是 | 是 | 是 | 是 |
-| 将本人投稿声明为 Official | 否 | 是 | 否 | 是 |
+| 通过治理入口修改扩展身份（任意投稿） | 否 | 否 | 否 | 是 |
 | Hide/Recover 未保护 Community | 否 | 否 | 是 | 是 |
 | Hide/Recover Official 或保护记录 | 否 | 否 | 否 | 是 |
 | Ban/Unban、授予/撤销角色 | 否 | 否 | 否 | 是 |
 | Protection、Security Hold、完整审计 | 否 | 否 | 否 | 是 |
 | 编辑他人内容 | 否 | 否 | 否 | 否 |
 
-Owner 来自服务器私有 `MIEMIE_OWNER_DISCORD_ID`，不能通过 API/Console 修改或封禁。Admin 与 Official Publisher 在 `roles` 表中保存，不形成权限等级链。旧 `MIEMIE_ADMIN_DISCORD_IDS` **仅在首次启动新版时导入一次**，写入 bootstrap 审计及完成标记；以后撤销角色不会被旧环境变量复活。完成后可移除旧变量。旧 Admin 不自动成为 Owner。
+Owner 来自服务器私有 `MIEMIE_OWNER_DISCORD_ID`，不能通过 API/Console 修改或封禁。Admin 在 `roles` 表中保存。历史 `official_publisher` 行和角色审计为兼容而保留，但该角色不再授予身份修改权；旧角色 API 保持可读写，Console 仅保留撤销旧 Publisher 的入口。`canPublishOfficial` 保留为兼容能力字段，仅 Owner 为 true，不能据此从投稿接口创建 Official。旧 `MIEMIE_ADMIN_DISCORD_IDS` **仅在首次启动新版时导入一次**，写入 bootstrap 审计及完成标记；以后撤销角色不会被旧环境变量复活。完成后可移除旧变量。旧 Admin 不自动成为 Owner。
 
-默认所有投稿都是 Community，不根据 Author、仓库组织名或 Profile 猜测 Official。Owner/Publisher 可以通过「我的」将自己的投稿设为 Official，默认开启 moderation protection。撤销 Publisher 后不能继续编辑 Official 内容或创建 Official；其已有记录仍保留原分类，不自动下架。可改为 Community 后管理。Admin 即使移除保护也不能管理 Official；只有 Owner 能主动解除保护。改回 Community 不会清除已有保护，作者编辑期间新设置的保护和 Security Hold 也会保留。分类审计读取事务写入前的最新治理状态。
+`classification` 已有且专门表示扩展身份：`official`（🐑官方扩展）或 `community`（🧩社区扩展）。它不是镜像、来源、产品类型或发布渠道，因此复用原字段，不引入第二个同义字段。
+
+所有新投稿（包括 Owner 代发）默认 community。Author 是独立作者显示字段；Submitter 来自认证账户。Author、Submitter、Discord 昵称、用户名、仓库组织名或普通 Manifest 的任何自声明都不能赋予 official。只有 Owner 可通过 `/admin` 或 `POST /api/admin/submissions/:id/classification` 双向切换身份；必须填写原因，与 before/after 审计在同一事务提交。Admin 和历史 Publisher 均被服务端拒绝。
+
+投稿 POST 中的 `classification:official` 对所有账户拒绝；为兼容旧客户端，允许默认 community。PATCH 允许回传原分类但拒绝改变分类；不含分类的普通内容编辑仍可维护已被 Owner 纳入官方的投稿，但不能改变项目身份。存储层的内容更新完全不写分类、保护和 Hold，避免等待外部验证时覆盖 Owner 的最新决定。
+
+提升为 official 默认开启 moderation protection；改回 community 不会清除已有保护。只有 Owner 的 protection 操作可主动解除保护；Admin 即使保护已解除也不能管理 official。身份切换不改变 Author、Submitter、来源、分发方式、可见范围或内容编辑权限。
+
+### Official 绑定的项目
+
+Official 接纳的是当前具体项目。集中比较：sourceType、规范化 sourceUrl、产品 type、websiteUrl、GitHub canonical owner/repo，以及 Manifest id/repository。GitHub 大小写和 `.git` 等价地址不算变更；版本、名称、作者、简介和分发方式不加入该判断。Manifest 从无到有或消失也按身份变化保守处理。
+
+任何账户（包括 Owner 编辑本人投稿）都必须先执行 official → community，才能改变上述项目定位字段；修改后由 Owner 重新确认 community → official。普通 PATCH 和自动 refresh 都不能转移 official 或自动降级。
+
+PATCH、refresh、Owner 授权在 `BEGIN IMMEDIATE` 内重新读取最新项目。refresh 还检查来源和缓存是否已被其他编辑改变；身份冲突保留完整旧记录并记录 `server-refresh / project_identity_mismatch` 审计及原项目/attempted 项目。没有新增状态机或数据库字段。
+
+后台卡片展示只读来源、Extension ID、Website（如有）、Submitter（Owner 可见其稳定 Discord ID）和 Submission ID。授权 official 必须回传卡片中服务端派生的 `projectIdentityKey`；事务内发现项目已变更或确认值缺失就返回 `project_changed`，要求刷新重看。这防止投稿者先改完项目、Owner 再从旧卡片授权的反向竞态。该值仅是项目快照校验，不是另一套权限或身份事实源；治理审计同时记录被接纳的项目。
+
+### Existing data
+
+无需新增列，数据库 schema 仍为 3。已有 v3 记录的明确分类保留；原 v2→v3 迁移继续将旧记录设为 community，将 `owner_id` 回填为 `submitter_id`，不从 Author 推断。Store 的读取边界统一将非精确 `official` 值解释为 community；Catalog、本人投稿、编辑、治理和 Admin 列表使用相同语义，保护状态仍独立生效。Hub 同样安全 fallback。读取不改写旧数据库、无需新 migration；Owner 明确治理时才写入合法分类。客户端新传入非法值（含 null）仍拒绝，不能使用 persisted fallback 绕过输入校验。
+
+本轮没有自动提升 Polisher 或其他记录，也没有修改生产数据。仓库归属或扩展 ID 不能唯一证明某一投稿的身份（不同 Submitter 可以提交同一来源）。部署后 Owner 可核对实际 Catalog 记录，再从现有治理入口明确赋予身份。
 
 封禁保留身份与历史记录，仍允许登录、读取目录、查看本人投稿和退出；禁止投稿、编辑、上下架、资料预览及治理写入。已有项目不会因 Ban 自动隐藏，Owner 按需另行 Hide。禁止所有人编辑他人内容；没有平台代编接口。
 
@@ -39,7 +61,7 @@ Security Hold 阻止清理；hidden/unlisted moderation 同样不自动清理。
 
 ## 独立管理后台
 
-`/admin` 是公开的无数据登录壳；通过同一 Discord OAuth 和 origin-bound Registry Session 登录，后台 API 再验证角色。普通用户无法获取治理数据。Admin 只看到 Community Hide/Recover；Owner 才看到用户角色、Ban、保护、Hold 和审计。Hub 中不包含管理表单或管理请求。
+`/admin` 是公开的无数据登录壳；通过同一 Discord OAuth 和 origin-bound Registry Session 登录，后台 API 再验证角色。普通用户无法获取治理数据。Admin 只看到 Community Hide/Recover；Owner 才看到扩展身份切换、用户角色、Ban、保护、Hold 和审计。Hub 中不包含管理表单或管理请求。
 
 为了维持 Origin 绑定，管理后台与 localhost Hub 不共享 Bearer Token，需要分别完成同一个 Discord 登录流程；不建立第二套账号。Token 仅存在页面内存，不进入 URL、持久存储或日志。same-origin GET 通过浏览器 Sec-Fetch-Site 与 Bearer 验证，不允许跨源伪装登录。
 

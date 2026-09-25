@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import {fail,text} from './validation.js';
+import {projectIdentity, projectIdentityKey} from './extension-identity.js';
 export const moderationSnapshot = row => ({classification:row.classification,moderation:row.moderation,protected:!!row.moderation_protected,securityHold:!!row.security_hold});
 export function rolesFor(config,store,user) {
   const owner=!!config.ownerId&&user.discord_id===config.ownerId;
   const roles=store.rolesFor(user.discord_id);
-  return {isOwner:owner,isAdmin:owner||roles.includes('admin'),canPublishOfficial:owner||roles.includes('official_publisher')};
+  // Keep the legacy capability key, but publisher roles never confer platform identity.
+  return {isOwner:owner,isAdmin:owner||roles.includes('admin'),canPublishOfficial:owner};
 }
-export function validateProduct(input,github,auth,previous=null) {
-  if(input.classification==='official'&&!auth.canPublishOfficial)fail(403,'official_forbidden','需要 Official Publisher 或 Owner 权限');
+export function validateProduct(input,github,previous=null) {
+  // Submission content is not an identity assignment path, even for the Owner.
+  if(input.classification!==(previous?.classification??'community'))fail(403,'identity_readonly','扩展身份只能由 Owner 在治理后台修改');
   if(input.distribution==='managed_install'&&(input.type!=='tavern_extension'||input.sourceType!=='github'||github?.compatibility!=='installable'))fail(400,'package_required','托管安装需要有效 Tavern Extension Package');
 }
 export function handleGovernance({path,method,body,auth,store,config,now,query}) {
@@ -23,8 +26,9 @@ export function handleGovernance({path,method,body,auth,store,config,now,query})
   }
   if(path==='/api/admin/audit'&&method==='GET'){owner();return {...store.listAudit(page),page};}
   if(path==='/api/admin/identities'&&method==='GET'){owner();return {...store.listIdentities(page),page};}
-  const item=/^\/api\/admin\/submissions\/([^/]+)\/(moderation|protection|security-hold)$/.exec(path);
+  const item=/^\/api\/admin\/submissions\/([^/]+)\/(moderation|protection|security-hold|classification)$/.exec(path);
   if(item&&method==='POST') {
+    if(item[2]==='classification')owner();
     const row=store.getEntry(item[1]);if(!row)fail(404,'not_found','项目不存在');
     const reason=text(body.reason,'原因',500);
     const before=moderationSnapshot(row);let action;
@@ -34,6 +38,15 @@ export function handleGovernance({path,method,body,auth,store,config,now,query})
       if(!Object.hasOwn(states,body.action))fail(400,'invalid_action','仅支持 Hide / Recover');
       action=body.action;
       store.transaction(()=>{store.setModeration(row.id,states[action],reason,now());store.audit(actor,action,row.id,reason,now(),before,moderationSnapshot(store.getEntry(row.id)));});
+    } else if(item[2]==='classification') {
+      if(!['community','official'].includes(body.classification))fail(400,'invalid_classification','扩展身份必须为 community 或 official');
+      store.transaction(()=>{
+        const current=store.getEntry(row.id),time=now();
+        if(body.classification==='official' && body.projectIdentityKey!==projectIdentityKey(current))fail(409,'project_changed','项目确认信息缺失或已变化，请刷新管理列表后重新核对');
+        const before={...moderationSnapshot(current),project:projectIdentity(current)};
+        store.setClassification(row.id,body.classification,time);
+        store.audit(actor,'classification',row.id,reason,time,before,{...moderationSnapshot(store.getEntry(row.id)),project:projectIdentity(store.getEntry(row.id))});
+      });
     } else {
       owner();if(typeof body.enabled!=='boolean')fail(400,'invalid_input','enabled 必须为布尔值');
       action=item[2];store.transaction(()=>{(action==='protection'?store.setProtection:store.setHold)(row.id,body.enabled);store.audit(actor,action,row.id,reason,now(),before,moderationSnapshot(store.getEntry(row.id)));});
