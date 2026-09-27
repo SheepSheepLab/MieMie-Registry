@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { createHash } from 'node:crypto';
+import {verifyPackage} from './package-validation.js';
 import { fail, plain, githubRepo, iconUrl, version, compareVersions, text } from './validation.js';
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 export async function boundedFetch(fetchImpl, url, { limit = 65536, timeout = 15000, headers = {}, method = 'GET', body, allowAssetRedirect = false } = {}) {
@@ -66,6 +67,8 @@ export function createGitHubAdapter({ fetchImpl = fetch } = {}) {
   async function inspect(repoUrl) {
     let repo = githubRepo(repoUrl), base = `https://api.github.com/repos/${repo.owner}/${repo.repo}`;
     const repository = await json(base);
+    // GitHub language describes implementation, not product type or Package capability.
+    // Only verified release metadata and actual package bytes grant installability.
     if (!plain(repository) || repository.private !== false || repository.full_name?.toLowerCase() !== `${repo.owner}/${repo.repo}`.toLowerCase()) fail(400, 'invalid_repository', '仓库必须公开且与输入地址一致');
     repo = githubRepo(`https://github.com/${repository.full_name}`);
     base = `https://api.github.com/repos/${repo.owner}/${repo.repo}`;
@@ -92,9 +95,12 @@ export function createGitHubAdapter({ fetchImpl = fetch } = {}) {
         if (m.schemaVersion !== 1 || m.productId !== manifest.id || m.version !== manifest.version || m.tag !== release.tag_name || m.format !== 'tavern-helper-script' || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(m.scriptId || '') || m.scriptId === 'e85cd9a3-6352-4b23-938a-6c94d826b4d3' || !validAsset || !/^[a-f0-9]{64}$/.test(m.contentSha256 || '')) throw new Error('metadata identity');
         const packages = release.assets.filter(a => a.name === m.asset.name);
         if (packages.length !== 1 || packages[0].size !== m.asset.size || packages[0].digest !== `sha256:${m.asset.sha256}` || packages[0].state !== 'uploaded' || !Number.isSafeInteger(packages[0].id) || packages[0].url !== `${base}/releases/assets/${packages[0].id}`) throw new Error('package metadata');
-        result.manifest = manifest; result.compatibility = 'installable'; result.reason = '符合机器安装元数据规范；不代表安全审核或作者认证';
+        const payload=await boundedFetch(fetchImpl,packages[0].url,{limit:16777216,timeout:60000,headers:{...apiHeaders,Accept:'application/octet-stream'},allowAssetRedirect:true});
+        if(payload.bytes.length!==m.asset.size||hash(payload.bytes)!==m.asset.sha256)throw Error('package digest');
+        verifyPackage(payload.bytes,m);
+        result.manifest = manifest; result.compatibility = 'installable'; result.reason = '符合机器安装包规范；不代表安全审核或作者认证';
         return result;
-      } catch { result.reason = 'Release 安装元数据无效或不可读取；可前往作者 GitHub 获取'; }
+      } catch { result.reason = 'Release 安装包或元数据无效、或不可读取；可前往作者 GitHub 获取'; }
     }
     // Root manifest supplies optional display fields only. It cannot grant installability.
     try {
@@ -129,9 +135,9 @@ export function createDiscordAdapter(config, { fetchImpl = fetch, now = Date.now
       // Returned only to server-side app state, never persisted or serialized to Hub.
       return { profile, credentials: { accessToken: tokens.access_token, expiresAt: now() + tokens.expires_in * 1000, scopes: ['identify', 'guilds'] } };
     },
-    async listGuilds(accessToken) {
+    async listGuilds(accessToken, {detailsFor} = {}) {
       if (typeof accessToken !== 'string' || !accessToken || accessToken.length > 4096) fail(401, 'discord_session_expired', '请重新使用 Discord 登录');
-      const ids = new Set(); let after = '';
+      const ids = new Set(); let after = '', detail = null;
       for (let page = 0; page < 10; page++) {
         const url = `https://discord.com/api/v10/users/@me/guilds?limit=200${after ? `&after=${after}` : ''}`;
         const result = await boundedFetch(fetchImpl, url, { limit: 2 * 1024 * 1024, headers: { Authorization: `Bearer ${accessToken}` } });
@@ -140,9 +146,13 @@ export function createDiscordAdapter(config, { fetchImpl = fetch, now = Date.now
         let last = after;
         for (const row of rows) {
           if (!plain(row) || !/^\d{15,22}$/.test(row.id || '') || ids.has(row.id) || (after && BigInt(row.id) <= BigInt(after))) fail(502, 'discord_guilds_invalid', 'Discord 服务器成员信息无效');
+          if (row.id === detailsFor) {
+            if (typeof row.name !== 'string' || !row.name.trim() || row.name.length > 100) fail(502,'discord_guilds_invalid','Discord 服务器名称无效');
+            detail = {id:row.id,name:row.name,iconUrl:typeof row.icon==='string' && /^(?:a_)?[a-f0-9]{32}$/.test(row.icon) ? `https://cdn.discordapp.com/icons/${row.id}/${row.icon}.png?size=96` : null};
+          }
           ids.add(row.id); if (!last || BigInt(row.id) > BigInt(last)) last = row.id;
         }
-        if (rows.length < 200) return [...ids];
+        if (rows.length < 200) return detailsFor ? detail : [...ids];
         if (last === after) fail(502, 'discord_guilds_invalid', 'Discord 服务器分页无效');
         after = last;
       }

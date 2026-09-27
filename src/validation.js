@@ -49,15 +49,21 @@ export function websiteUrl(value) {
   return u.href;
 }
 export const productTypes = {tavern_extension:['managed_install','external_release','open_url'],standalone_app:['external_release'],web_tool:['open_url']};
+// Product type is a declaration; repository language is never evidence of installability.
+export function validateDistribution(type,source,distribution){
+  if(typeof type!=='string'||!Object.hasOwn(productTypes,type))fail(400,'invalid_type','不支持此产品类型');
+  if(!['github','discord'].includes(source))fail(400,'invalid_source','来源必须为 GitHub 或 Discord');
+  if(!productTypes[type].includes(distribution)||(distribution==='managed_install'&&source!=='github'))fail(400,'invalid_distribution','产品类型、来源与分发方式不兼容');
+}
 export function submissionInput(body) {
   if (!plain(body)) fail(400, 'invalid_input', '需要 JSON 对象');
-  const allowed = new Set(['name', 'description', 'author', 'sourceType', 'sourceUrl', 'icon', 'tags', 'visibility', 'visibilitySourceUrl','type','distribution','platforms','websiteUrl','classification']);
+  const allowed = new Set(['name', 'description', 'author', 'sourceType', 'sourceUrl', 'icon', 'tags', 'visibility', 'visibilitySourceUrl','githubUrl','discordUrl','type','distribution','platforms','websiteUrl','classification']);
   if (Object.keys(body).some(key => !allowed.has(key))) fail(400, 'invalid_field', '不能修改身份、所有者或内部字段');
   if (!['github', 'discord'].includes(body.sourceType)) fail(400, 'invalid_source', '来源必须为 GitHub 或 Discord');
   const type=body.type??'tavern_extension';
   if(typeof type!=='string'||!Object.hasOwn(productTypes,type))fail(400,'invalid_type','不支持此产品类型');
   const distribution=body.distribution ?? (type==='web_tool'||body.sourceType==='discord'?'open_url':'external_release');
-  if(!productTypes[type].includes(distribution)||(distribution==='managed_install'&&body.sourceType!=='github'))fail(400,'invalid_distribution','产品类型、来源与分发方式不兼容');
+  validateDistribution(type,body.sourceType,distribution);
   const website=websiteUrl(body.websiteUrl);
   if(type==='web_tool'&&!website)fail(400,'invalid_website','Web Tool 必须填写网站地址');
   const platforms=body.platforms??[];
@@ -70,13 +76,18 @@ export function submissionInput(body) {
   const visibility = body.visibility ?? 'public';
   if (!['public', 'discord_guild'].includes(visibility)) fail(400, 'invalid_visibility', '可见范围必须为 public 或 discord_guild');
   const sourceUrl = body.sourceType === 'github' ? githubRepo(body.sourceUrl).url : discordPost(body.sourceUrl);
+  const optionalLink = (value, parse) => value === undefined || value === null || value === '' ? null : parse(text(value,'项目链接',2048));
+  const githubUrl = body.sourceType === 'github' ? sourceUrl : optionalLink(body.githubUrl, value=>githubRepo(value).url);
+  const discordUrl = body.sourceType === 'discord' ? sourceUrl : optionalLink(body.discordUrl, discordPost);
+  if (body.sourceType === 'github' && body.githubUrl && githubRepo(body.githubUrl).url.toLowerCase() !== sourceUrl.toLowerCase()) fail(400,'invalid_source','GitHub 链接必须与安装来源一致');
+  if (body.sourceType === 'discord' && body.discordUrl && discordPost(body.discordUrl) !== sourceUrl) fail(400,'invalid_source','Discord 链接必须与原帖来源一致');
   const discord = body.sourceType === 'discord' ? discordLocation(sourceUrl) : null;
   let visibilityLocation = null;
   if (visibility === 'discord_guild') {
-    visibilityLocation = body.sourceType === 'discord' ? discord : discordLocation(body.visibilitySourceUrl);
+    visibilityLocation = body.sourceType === 'discord' ? discord : discordLocation(body.visibilitySourceUrl || discordUrl);
     if (body.sourceType === 'discord' && body.visibilitySourceUrl && discordPost(body.visibilitySourceUrl) !== sourceUrl) fail(400, 'invalid_visibility', 'Discord 可见范围必须依据当前原帖');
   }
-  return { type, distribution, platforms:[...new Set(platforms)], websiteUrl:website, classification, visibility, visibilityGuildId: visibilityLocation?.guildId || null, visibilitySourceUrl: visibilityLocation?.url || null, discord, name: text(body.name, '名称', 100), description: text(body.description, '简介', 2000), author: text(body.author, '作者', 100), sourceType: body.sourceType, sourceUrl, icon: iconUrl(body.icon), tags: [...new Set(tags.map(tag => text(tag, '标签', 30)))] };
+  return { githubUrl, discordUrl, type, distribution, platforms:[...new Set(platforms)], websiteUrl:website, classification, visibility, visibilityGuildId: visibilityLocation?.guildId || null, visibilitySourceUrl: visibilityLocation?.url || null, discord, name: text(body.name, '名称', 100), description: text(body.description, '简介', 2000), author: text(body.author, '作者', 100), sourceType: body.sourceType, sourceUrl, icon: iconUrl(body.icon), tags: [...new Set(tags.map(tag => text(tag, '标签', 30)))] };
 }
 export function version(value) { return typeof value === 'string' && value.trim() === value && /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(value) && value.length < 40; }
 export function compareVersions(a, b) {

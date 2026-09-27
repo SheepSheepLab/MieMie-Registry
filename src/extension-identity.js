@@ -16,7 +16,7 @@ export function projectIdentity(row) {
   return {
     sourceType:row.source_type, sourceUrl:source, type:row.product_type,
     websiteUrl:row.website_url || null,
-    repository:row.source_type === 'github' ? repository(github?.owner && github?.repo ? `https://github.com/${github.owner}/${github.repo}` : source) : null,
+    repository:row.source_type === 'github' ? repository(github?.owner && github?.repo ? `https://github.com/${github.owner}/${github.repo}` : source) : repository(row.github_url),
     extensionId:github?.manifest?.id || null,
     manifestRepository:github?.manifest ? repository(github.manifest.repository || source) : null,
   };
