@@ -12,7 +12,7 @@
 
 Discord OAuth access_token／refresh_token、Email、密码从不入库。OAuth access token、state 和一次性 bridge 仅在服务器内存中，过期或重启失效。不保留 refresh token。Profile 每次登录更新，Submission owner 始终绑定 Snowflake。更换 Display Name／Username 不转移所有权。
 
-数据库使用 `PRAGMA user_version=3`。升级前停止旧版本服务并执行一致性备份；不要让旧版与新版同时访问同一数据库。v1 → v2 在一个事务中复制既有 submissions 的全部字段／ID，添加可见性与 Discord 链接字段，旧记录默认 public；来源唯一约束改为 `(owner_id, source_url)`，避免通过全站重复来源错误探测其他人的受限条目。身份、Session、头像和审计不重建；迁移失败回滚。不要让旧版程序打开新 Schema，恢复旧版时使用升级前快照。首次建立 Schema 同样在事务中完成，发现未来更高版本立即拒绝打开。
+数据库使用 `PRAGMA user_version=4`。升级前停止旧版本服务并执行一致性备份；不要让旧版与新版同时访问同一数据库。v1 → v2 在一个事务中复制既有 submissions 的全部字段／ID，添加可见性与 Discord 链接字段，旧记录默认 public；来源唯一约束改为 `(owner_id, source_url)`，避免通过全站重复来源错误探测其他人的受限条目。身份、Session、头像和审计不重建；迁移失败回滚。不要让旧版程序打开新 Schema，恢复旧版时使用升级前快照。首次建立 Schema 同样在事务中完成，发现未来更高版本立即拒绝打开。
 
 运行 `npm run backup` 使用只读连接和 SQLite 官方一致性备份 API，将快照存到被忽略的 `backups/`（可用 `BACKUP_DIRECTORY` 覆盖），不迁移或创建原数据库。不要在正在写入时只复制主 .sqlite 文件而遗漏 WAL。恢复时停止进程，保留故障数据库和 WAL 的私有备份，再将经验证快照放到 DATABASE_PATH，清理仅属于该数据库的旧 WAL/SHM 后启动。生产恢复步骤应由运维复核并先在隔离副本演练。
 
@@ -23,3 +23,7 @@ Discord OAuth access_token／refresh_token、Email、密码从不入库。OAuth 
 ## v2 → v3
 
 单事务增量 ALTER，保留所有旧列及值，增加不可变 submitter、classification/protection/hold、产品类型/分发/平台/网站、下架期限；新增 roles 和一次性迁移标记；审计增加 before/after。旧身份不提升为 Owner，全部记录初始 Community；已验证 Package 的 GitHub 记录迁移为 Tavern managed_install。迁移失败事务回滚。旧程序拒绝 v3，代码回退必须使用隔离验证过的 v2 快照，不可直接让旧代码操作新库。生产升级先隔离写入、备份及验证，然后迁移；恢复路径保留旧程序、数据库快照与运维检查脚本。
+
+## v3 → v4
+
+单事务增加 `github_url` / `discord_url`，仅从既有主来源填充对应链接。旧 `visibility_source_url` 保持私有，不自动公开；所有原列、账号、治理状态、审计和项目 ID 保持不变。重复打开不会重复迁移。`tools/migrate-verified.mjs` 支持从 v2 / v3 备份生成隔离 v4 候选并核对原有数据，绝不替换在线数据库。部署前需一致备份；旧程序拒绝 v4，不能仅回退代码而继续使用 v4 数据库。

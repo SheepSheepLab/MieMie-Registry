@@ -15,20 +15,21 @@ const snapshot=await backupDatabase(source,directory);
 const prior=new DatabaseSync(snapshot,{readOnly:true});
 try {
  if(prior.prepare('PRAGMA integrity_check').get().integrity_check!=='ok'||prior.prepare('PRAGMA foreign_key_check').all().length)throw Error('Backup integrity failed');
- if(prior.prepare('PRAGMA user_version').get().user_version!==2)throw Error('Expected production schema 2');
+ const schema=prior.prepare('PRAGMA user_version').get().user_version;
+ if(![2,3].includes(schema))throw Error('Expected production schema 2 or 3');
  await copyFile(snapshot,candidate);await chmod(candidate,0o600);
  const migrated=openStore(candidate);
  try {
-  for(const table of ['identities','avatars','sessions','submissions','audit']){
+  for(const table of ['identities','avatars','sessions','submissions','audit',...(schema>=3?['roles','governance_settings']:[])]){
    const columns=prior.prepare(`PRAGMA table_info(${table})`).all().map(r=>r.name).join(',');
    const before=prior.prepare(`SELECT ${columns} FROM ${table} ORDER BY rowid`).all();
    const after=migrated.db.prepare(`SELECT ${columns} FROM ${table} ORDER BY rowid`).all();
    if(JSON.stringify(before)!==JSON.stringify(after))throw Error('Existing records changed: '+table);
   }
   const rows=migrated.db.prepare("SELECT product_type,distribution,github_json FROM submissions WHERE source_type='github'").all();
-  for(const row of rows)if(JSON.parse(row.github_json||'null')?.compatibility==='installable'&&(row.product_type!=='tavern_extension'||row.distribution!=='managed_install'))throw Error('Package migration mismatch');
+  for(const row of rows)if(schema===2&&JSON.parse(row.github_json||'null')?.compatibility==='installable'&&(row.product_type!=='tavern_extension'||row.distribution!=='managed_install'))throw Error('Package migration mismatch');
   if(migrated.db.prepare('PRAGMA integrity_check').get().integrity_check!=='ok'||migrated.db.prepare('PRAGMA foreign_key_check').all().length)throw Error('Candidate integrity failed');
   migrated.db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
  } finally {migrated.close();}
- console.log(JSON.stringify({status:'prepared',schema:3,snapshot,candidate,existingRows:'unchanged'}));
+ console.log(JSON.stringify({status:'prepared',schema:4,snapshot,candidate,existingRows:'unchanged'}));
 }finally{prior.close();}

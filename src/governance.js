@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import {fail,text} from './validation.js';
+import {fail,text,validateDistribution} from './validation.js';
 import {projectIdentity, projectIdentityKey} from './extension-identity.js';
 export const moderationSnapshot = row => ({classification:row.classification,moderation:row.moderation,protected:!!row.moderation_protected,securityHold:!!row.security_hold});
 export function rolesFor(config,store,user) {
@@ -11,6 +11,7 @@ export function rolesFor(config,store,user) {
 export function validateProduct(input,github,previous=null) {
   // Submission content is not an identity assignment path, even for the Owner.
   if(input.classification!==(previous?.classification??'community'))fail(403,'identity_readonly','扩展身份只能由 Owner 在治理后台修改');
+  validateDistribution(input.type,input.sourceType,input.distribution);
   if(input.distribution==='managed_install'&&(input.type!=='tavern_extension'||input.sourceType!=='github'||github?.compatibility!=='installable'))fail(400,'package_required','托管安装需要有效 Tavern Extension Package');
 }
 export function handleGovernance({path,method,body,auth,store,config,now,query}) {

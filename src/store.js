@@ -11,7 +11,7 @@ export function openStore(path) {
   db.exec('PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;');
   try {
   const schema = db.prepare('PRAGMA user_version').get().user_version;
-  if (schema > 3) throw new Error('数据库版本高于当前程序；请使用较新程序');
+  if (schema > 4) throw new Error('数据库版本高于当前程序；请使用较新程序');
   if (schema === 0) db.exec(`BEGIN;
     CREATE TABLE identities (discord_id TEXT PRIMARY KEY, display_name TEXT NOT NULL, username TEXT NOT NULL, avatar_key TEXT, profile_updated_at INTEGER NOT NULL, banned INTEGER NOT NULL DEFAULT 0);
     CREATE TABLE avatars (key TEXT PRIMARY KEY, bytes BLOB NOT NULL, mime TEXT NOT NULL);
@@ -56,6 +56,13 @@ export function openStore(path) {
     CREATE INDEX submissions_retention ON submissions(purge_after,security_hold);
     PRAGMA user_version=3;
     COMMIT;`);
+  if (schema < 4) db.exec(`BEGIN IMMEDIATE;
+    ALTER TABLE submissions ADD COLUMN github_url TEXT;
+    ALTER TABLE submissions ADD COLUMN discord_url TEXT;
+    UPDATE submissions SET github_url=source_url WHERE source_type='github';
+    UPDATE submissions SET discord_url=source_url WHERE source_type='discord';
+    PRAGMA user_version=4;
+    COMMIT;`);
   } catch(error) {try {db.exec('ROLLBACK');} catch {} db.close();throw error;}
   const getIdentity = id => db.prepare('SELECT * FROM identities WHERE discord_id=?').get(id);
   function upsertIdentity(profile, now) {
@@ -73,7 +80,7 @@ export function openStore(path) {
   function profileDTO(identity) { return { displayName: identity.display_name, avatarUrl: identity.avatar_key ? `/api/avatars/${identity.avatar_key}` : null }; }
   function entryDTO(row, privateView = false) {
     const github = row.github_json ? JSON.parse(row.github_json) : null;
-    const dto = { id: row.id, visibility: row.visibility, extensionId: github?.manifest?.id || null, name: row.name, description: row.description, author: row.author, classification: canonicalClassification(row.classification), type: row.product_type, distribution: row.distribution, platforms: JSON.parse(row.platforms_json), websiteUrl: row.website_url, submitter: profileDTO(getIdentity(row.submitter_id)), sourceType: row.source_type, sourceUrl: row.source_url, icon: github?.manifest?.iconUrl || row.icon || null, tags: JSON.parse(row.tags_json), version: github?.release?.version || null, github, createdAt: new Date(row.created_at).toISOString(), updatedAt: new Date(row.updated_at).toISOString() };
+    const dto = { id: row.id, visibility: row.visibility, extensionId: github?.manifest?.id || null, name: row.name, description: row.description, author: row.author, classification: canonicalClassification(row.classification), type: row.product_type, distribution: row.distribution, platforms: JSON.parse(row.platforms_json), websiteUrl: row.website_url, submitter: profileDTO(getIdentity(row.submitter_id)), githubUrl: row.source_type==='github'?row.source_url:row.github_url, discordUrl: row.source_type==='discord'?row.source_url:row.discord_url, sourceType: row.source_type, sourceUrl: row.source_url, icon: github?.manifest?.iconUrl || row.icon || null, tags: JSON.parse(row.tags_json), version: github?.release?.version || null, github, createdAt: new Date(row.created_at).toISOString(), updatedAt: new Date(row.updated_at).toISOString() };
     if (privateView) Object.assign(dto, { projectIdentityKey: projectIdentityKey(row), status: row.owner_status, moderation: row.moderation, moderationReason: row.moderation_reason, visibilitySourceUrl: row.visibility_source_url, moderationProtected: !!row.moderation_protected, unlistedAt: row.unlisted_at, purgeAfter: row.purge_after });
     return dto;
   }
@@ -110,11 +117,12 @@ export function openStore(path) {
   function updateSubmission({id,input,github,time}) {
     // The caller holds BEGIN IMMEDIATE; compare with the latest accepted project.
     const current = getEntry(id);
-    assertOfficialProject(current, {...current, source_type:input.sourceType, source_url:input.sourceUrl, product_type:input.type, website_url:input.websiteUrl, github_json:github ? JSON.stringify(github) : null});
+    assertOfficialProject(current, {...current, source_type:input.sourceType, source_url:input.sourceUrl, product_type:input.type, website_url:input.websiteUrl, github_url:input.githubUrl, github_json:github ? JSON.stringify(github) : null});
     db.prepare('UPDATE submissions SET name=?,description=?,author=?,source_type=?,source_url=?,icon=?,tags_json=?,github_json=?,updated_at=?,visibility=?,visibility_guild_id=?,visibility_source_url=?,discord_json=? WHERE id=?').run(input.name,input.description,input.author,input.sourceType,input.sourceUrl,input.icon,JSON.stringify(input.tags),github?JSON.stringify(github):null,time,input.visibility,input.visibilityGuildId,input.visibilitySourceUrl,input.discord?JSON.stringify(input.discord):null,id);
     setProduct(id,input);
   }
   function setProduct(id,input) {
+    db.prepare('UPDATE submissions SET github_url=?,discord_url=? WHERE id=?').run(input.githubUrl||null,input.discordUrl||null,id);
     db.prepare('UPDATE submissions SET product_type=?,distribution=?,platforms_json=?,website_url=? WHERE id=?').run(input.type||'tavern_extension',input.distribution||(input.sourceType==='discord'?'open_url':'external_release'),JSON.stringify(input.platforms||[]),input.websiteUrl||null,id);
   }
   // Only called by Owner governance. A downgrade cannot remove Owner protection.

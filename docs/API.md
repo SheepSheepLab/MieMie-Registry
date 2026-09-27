@@ -69,7 +69,7 @@ Discord 项目 `github`、`version`、`extensionId` 为 null。只有 `type === 
 4. Discord 官方 OAuth 使用 `identify guilds`，服务端验证一次性 state/Cookie 后交换 Token 并同步 Profile。Discord Token 和内部 User ID 不传给 Hub。
 5. Hub 每 3 秒或返回焦点时 `POST /api/auth/complete {requestId,codeVerifier}`。待授权时返回 202 `{status:"pending"}`；成功结果只可领取一次，绑定原 Origin、requestId 和 verifier。任意错误来源、错误 verifier、未知/过期请求均拒绝，不消耗合法结果。每个流程至多 40 次/分钟，并受全局限流约束。
 6. 返回 `{token,expiresAt,profile:{displayName,avatarUrl},isAdmin,canSubmit}` 后 Hub 使用内存 Registry Bearer Token 请求 `/api/me`，确认后通知「我的」刷新。所有 Hub API 请求均 `credentials: omit`；CORS 显式允许 Origin 和 Authorization，无需 Access-Control-Allow-Credentials 或第三方 Cookie。
-7. 回调仍尝试严格 targetOrigin 的 postMessage，作为轮询唤醒提示；Hub 检查 origin/source/requestId，但消息丢失、opener=null、COOP 断开后的 popup.closed 不影响新协议。旧 `/api/auth/exchange {code,requestId,codeVerifier}` 保留兼容，与 complete 共享一次性消费状态。
+7. 回调仍尝试严格 targetOrigin 的 postMessage，作为轮询唤醒提示；成功回调页在 1.5 秒后尝试自行关闭，浏览器拒绝关闭时显示手动返回提示。Hub 检查 origin/source/requestId，但消息丢失、opener=null、COOP 断开后的 popup.closed 不影响新协议。旧 `/api/auth/exchange {code,requestId,codeVerifier}` 保留兼容，与 complete 共享一次性消费状态。
 8. state/待授权交接最长 5 分钟，成功结果保留 60 秒。取消、超时、切换 Registry、退出或 teardown 停止轮询并忽略迟到结果；重载需要重新登录。仅关闭弹窗不会立即结束新协议，因为浏览器隔离也会呈现 closed；未完成授权会在截止时间明确失败。
 
 OAuth Secret、Discord Token、verifier 和 Registry 会话不写 URL 或持久浏览器存储。服务重启丢失内存交接时安全失败，需要重新登录。回调显示完成只代表 Discord 交换成功；Hub 显示头像/名称才代表交接和 current-user 校验完成。
@@ -80,11 +80,12 @@ OAuth Secret、Discord Token、verifier 和 Registry 会话不写 URL 或持久�
 - `POST /api/auth/logout {}` → `{ok:true}`，服务器立即删除当前会话。
 - `GET /api/submissions` → `{items}`，只返回本人投稿，额外含 `status`（listed/unlisted）、`moderation`（visible/hidden/unlisted）和 `moderationReason`。
 - `GET /api/github/preview?url=https://github.com/owner/repo` → GitHub 发现对象，供表单预填；必须让用户确认展示信息。
+- `GET /api/discord/verify?url=<Discord channels URL>` → `{sourceUrl,guild:{id,name,iconUrl},member:true}`。需登录且可投稿，每账号 10 次/分钟；只返回当前账号已加入的指定服务器，不读取帖子内容、不保存可见范围、不返回全部服务器列表。无成员资格 403，上游不可用 503，会话失效 401。保存仍重新验证，不能用这个结果作为授权凭据。
 - `POST /api/submissions` → 201，新项目默认 listed，visibility 默认 public；不会扫描仓库自动创建条目。
 - `PATCH /api/submissions/:id` → 修改本人展示字段，不能更改 owner、ID、缓存版本或内部字段。
 - `POST /api/submissions/:id/status {status:"listed"|"unlisted"}`。
 
-创建字段：`name`（1–100）、`description`（1–2000）、`author`（1–100）、`sourceType`、`sourceUrl`、可选 `icon`、`tags`（最多 8 个，每个最多 30 字符）、`visibility`（public / discord_guild）与 `visibilitySourceUrl`。编辑允许同一字段集合；sourceUrl 重新验证并重新产生仓库发现信息，不继承旧仓库 Hash。
+创建字段：`name`（1–100）、`description`（1–2000）、`author`（1–100）、`sourceType`、`sourceUrl`、可选 `icon`、`tags`（最多 8 个，每个最多 30 字符）、`visibility`（public / discord_guild）与 `visibilitySourceUrl`，以及可选 `githubUrl` / `discordUrl` 两个独立展示链接。主来源对应的链接必须与 `sourceUrl` 一致；旧客户端只传 `sourceUrl` 仍受支持。编辑允许同一字段集合；sourceUrl 重新验证并重新产生仓库发现信息，不继承旧仓库 Hash。
 
 ## Governance
 
@@ -105,7 +106,7 @@ OAuth Secret、Discord Token、verifier 和 Registry 会话不写 URL 或持久�
 
 Public DTO 返回 `classification:"official"|"community"`，与 `author`、认证账户的公开 `submitter` profile 独立；不返回 submitter/owner ID、Hold、Retention 或审计。旧记录缺失或非法值在 Store、Catalog、普通编辑、治理和 Admin 列表中统一按 community；客户端显式传入非法 classification（包括 null）仍返回 400 `invalid_classification`；普通 Manifest 的同名字段不具备身份权威。`canPublishOfficial` 为兼容保留，仅 Owner 为 true；历史 `official_publisher` 角色不再获得任何身份修改权。
 
-Official 投稿的项目定位字段不可直接变更，Owner 编辑本人内容也一样：sourceType、规范化 sourceUrl、产品 type、websiteUrl、GitHub owner/repo、Manifest id/repository。必须先由 Owner 降为 community，再修改项目，最后重新确认 official。版本、名称、作者、简介等内容维护不视为项目身份变化，分发方式仍是独立维度。
+Official 投稿的项目定位字段不可直接变更，Owner 编辑本人内容也一样：sourceType、规范化 sourceUrl、产品 type、websiteUrl、GitHub owner/repo、Manifest id/repository，以及 Discord 来源记录的补充 GitHub repository。GitHub 项目的讨论帖链接不改变其安装项目身份。必须先由 Owner 降为 community，再修改项目，最后重新确认 official。版本、名称、作者、简介等内容维护不视为项目身份变化，分发方式仍是独立维度。
 
 PATCH 在最终写入事务中检查最新记录，项目不匹配返回 409 `official_project_identity_mismatch`，不更新内容或自动降级。Catalog 自动 refresh 使用同一检查，冲突时保留已接纳记录并写入 Owner 可见的 `project_identity_mismatch` 审计（actor=`server-refresh`，含原项目和 attempted 项目）；Catalog 仍可读取最后接受的记录。相同冲突不重复写审计。普通 refresh 只更新 GitHub 缓存，不覆盖身份、保护、Hold 或 moderation。
 
@@ -117,9 +118,9 @@ PATCH 在最终写入事务中检查最新记录，项目不匹配返回 409 `of
 
 ## Guild ACL 投稿字段
 
-`visibility` 默认 `public`。`discord_guild` 仅允许从有效 Discord `channels/<guild>/<channel>[/<message>]` 链接确定权限范围；服务器名称不参与判断。Discord 来源直接使用 `sourceUrl`；GitHub 来源需额外提供 `visibilitySourceUrl`。客户端不得传入 `visibilityGuildId`、owner 或其他内部字段。消息／频道实际内容不会被读取，此限制只证明 Guild 成员身份，不是频道访问权限验证。
+`visibility` 默认 `public`。`discord_guild` 仅允许从有效 Discord `channels/<guild>/<channel>[/<message>]` 链接确定权限范围；服务器名称不参与判断。Discord 来源直接使用 `sourceUrl`；GitHub 来源优先使用独立的 `visibilitySourceUrl` 作为范围依据，与公开展示的 `discordUrl` 可以不同；未提供范围字段时兼容以 `discordUrl` 为依据。Discord 主来源仍必须使用其 `sourceUrl` 确定范围，显式范围字段若不一致会被拒绝。客户端不得传入 `visibilityGuildId`、owner 或其他内部字段。消息／频道实际内容不会被读取，此限制只证明 Guild 成员身份，不是频道访问权限验证。
 
-投稿、编辑受限记录和重新上架均重新验证当前投稿者属于该 Guild；修改来源重新解析，不继承旧 Guild 授权。自己的投稿响应附加 `visibilitySourceUrl` 便于编辑。可见目录只给 `visibility` 标签，不给用户的成员列表或单独的内部 Guild 字段；未经授权完全不返回条目。源 Discord 链接自身仍含其公开结构 ID。
+投稿、编辑受限记录和重新上架均重新验证当前投稿者属于该 Guild；修改来源重新解析，不继承旧 Guild 授权。自己的投稿响应附加 `visibilitySourceUrl` 便于编辑。可见目录只给 `visibility` 标签，不给用户的成员列表或单独的内部 Guild 字段；未经授权完全不返回条目。显式保存的 `githubUrl` / `discordUrl` 随可见条目展示；旧私有 `visibilitySourceUrl` 不会在迁移时自动转为公开链接。Discord 链接自身仍含其结构 ID。
 
 同一投稿者的重复来源会被拒绝；不同身份可以提交同一来源，不能据错误响应探测其他人的受限记录。数据库的 Catalog UUID 区分记录；没有“认证作者”推断。禁止恶意堆积由限流、每人总量和管理员治理处理。
 
@@ -130,3 +131,27 @@ Discord API 不可达、限流或凭据过期时不使用旧的“成员”结�
 OAuth exchange/complete 和 `GET /api/me` 增量返回布尔字段 `banned`，表示当前认证账号是否受限；保留 `canSubmit`、`isAdmin`、`isOwner` 等兼容字段和全部服务端授权语义。账号显示优先级为 banned=true → 受限用户，否则 isAdmin=true → 管理员，否则普通用户。Owner 仍保留 isOwner=true，普通 Hub 界面显示管理员。旧 Registry 缺少 banned 时客户端不根据 canSubmit 猜测受限身份。
 
 Owner 的账号治理列表返回 isOwner/isAdmin 标志，供 UI 标注根身份保护；服务器仍独立拒绝修改 Owner。`/admin.css` 为公开静态样式，不含账号数据。治理列表中的操作先展示目标、稳定标识与原因输入；确认后才提交既有治理 API，取消不发送治理请求。
+
+### Product declaration and install capability
+
+Product types remain `tavern_extension`, `standalone_app`, `web_tool`; GitHub
+Language is not used. Distribution is validated independently in request parsing
+and governance: standalone → external_release; web → open_url; Tavern → legal
+external/open navigation or managed_install. Discord can never managed_install.
+GitHub Tavern external_release remains a submitter declaration, not an install
+permission or machine claim about what the application actually is.
+
+`github.compatibility=installable` now requires the selected release metadata,
+manifest/API/repository identity, actual package bytes/hash/size, helper-script
+structure and build identity/content hash to agree. Catalog inspection and the
+download relay share `package-validation.js`; downloaded code is never executed.
+Inspection may download up to 16 MiB using the existing allowlisted bounded
+transport. Preview/cache TTL and refresh budgets still apply. Invalid/unreadable
+packages stay external; safe display prefill can still be supplied.
+
+Cached Catalog data never authorizes installation. Hub re-inspects before install,
+checks the Catalog extension ID still matches, then independently verifies the
+locked release, exact package bytes, structure and compatibility before writing.
+Changing a release or claiming a product type cannot bypass these checks. Machine
+compatibility is not a safety audit and never assigns Official classification.
+Shortcut Launcher is an opt-in Runtime presentation capability, not a Catalog type.

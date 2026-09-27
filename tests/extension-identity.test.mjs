@@ -125,7 +125,7 @@ test('existing schema-v3 explicit identities survive reopen; absent DTO identity
     assert.deepEqual({...reopened.getEntry('existing')}, before);
     const legacy = {...before}; delete legacy.classification;
     assert.equal(reopened.entryDTO(legacy).classification, 'community');
-    assert.equal(reopened.db.prepare('PRAGMA user_version').get().user_version, 3);
+    assert.equal(reopened.db.prepare('PRAGMA user_version').get().user_version, 4);
   } finally {reopened.close();}
 });
 

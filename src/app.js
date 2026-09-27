@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) 2026 SheepSheep
 import { randomBytes, randomUUID, createHash, createHmac, timingSafeEqual } from 'node:crypto';
-import { fail, plain, text, submissionInput } from './validation.js';
+import { fail, plain, text, submissionInput, discordLocation } from './validation.js';
 import { createDiscordAdapter, createGitHubAdapter } from './remote.js';
 import { createGitHubRelay, createHubReleaseRelay } from './github-relay.js';
 import {rolesFor,validateProduct,handleGovernance} from './governance.js';
@@ -123,7 +123,7 @@ export function createApp({ config, store, discord = createDiscordAdapter(config
       if (method === 'OPTIONS') { res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, OPTIONS'); res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type'); res.setHeader('Access-Control-Max-Age', '600'); res.writeHead(204); res.end(); return; }
       if (!['GET', 'POST', 'PATCH'].includes(method)) fail(405, 'method_not_allowed', '不支持此请求');
       if (method !== 'GET' && (!origin || !config.allowedOrigins.has(origin))) fail(403, 'origin_required', '写入请求必须来自已配置页面');
-      if (path === '/health' && method === 'GET') {if(store.db.prepare('PRAGMA user_version').get().user_version!==3)throw Error('schema');store.db.prepare('SELECT id FROM submissions LIMIT 1').get();return send(res, 200, { status: 'ok', version: '0.4.0' });}
+      if (path === '/health' && method === 'GET') {if(store.db.prepare('PRAGMA user_version').get().user_version!==4)throw Error('schema');store.db.prepare('SELECT id FROM submissions LIMIT 1').get();return send(res, 200, { status: 'ok', version: '0.4.0' });}
       if(path==='/admin'&&method==='GET') {
         res.setHeader('Content-Security-Policy',"default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'");
         res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'});res.end(adminPage);return;
@@ -169,7 +169,7 @@ export function createApp({ config, store, discord = createDiscordAdapter(config
         const nonce = random();
         res.setHeader('Content-Security-Policy', `default-src 'none'; script-src 'nonce-${nonce}'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'`);
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-        res.end(`<!doctype html><meta charset="utf-8"><title>MieMie Discord 登录</title><p>登录完成，请返回 MieMie Hub。若原窗口已关闭，请重新登录。</p><script nonce="${nonce}">try{if(window.opener){window.opener.postMessage(${jsonScript({ type: 'miemie-registry-auth', code: bridge, requestId: flow.requestId })},${jsonScript(flow.origin)});}}catch{}history.replaceState(null,'','/api/auth/callback');</script>`); return;
+        res.end(`<!doctype html><meta charset="utf-8"><title>MieMie Discord 登录</title><p>Discord 授权已完成，此窗口将自动关闭。若浏览器阻止关闭，请手动返回 MieMie Hub。</p><script nonce="${nonce}">try{if(window.opener){window.opener.postMessage(${jsonScript({ type: 'miemie-registry-auth', code: bridge, requestId: flow.requestId })},${jsonScript(flow.origin)});}}catch{}history.replaceState(null,'','/api/auth/callback');setTimeout(()=>{try{window.close();}catch{}},1500);</script>`); return;
       }
       if (path === '/api/auth/complete' && method === 'POST') {
         const body = await readJSON(req);
@@ -229,6 +229,21 @@ export function createApp({ config, store, discord = createDiscordAdapter(config
         } finally { req.off('aborted', cancel); res.off('close', cancel); controller.abort(); relayRequests.delete(controller); }
         return;
       }
+      if (path === '/api/discord/verify' && method === 'GET') {
+        const auth=authenticate(req);canSubmit(auth.user);
+        const location=discordLocation(requestUrl.searchParams.get('url'));
+        limit(`guild-preview:${auth.user.discord_id}`,10,60000);
+        const credentials=sessionCredentials.get(auth.session.hash);
+        if(!credentials||credentials.expiresAt<=now())fail(401,'session_expired','请重新使用 Discord 登录');
+        let guild;
+        try {guild=await discord.listGuilds(credentials.accessToken,{detailsFor:location.guildId});}
+        catch {fail(503,'membership_unavailable','暂时无法验证 Discord 服务器，请稍后重试');}
+        canSubmit(authenticate(req).user);
+        if(!guild)fail(403,'guild_membership_required','未找到你已加入的对应服务器，请确认链接或重新登录');
+        if(guild.id!==location.guildId||typeof guild.name!=='string'||!guild.name.trim()||guild.name.length>100)fail(503,'membership_unavailable','服务器信息无效，请稍后重试');
+        // Return only the requested membership, never the user's complete guild list.
+        return send(res,200,{sourceUrl:location.url,guild:{id:guild.id,name:guild.name,iconUrl:guild.iconUrl||null},member:true});
+      }
       if (path === '/api/github/preview' && method === 'GET') { const { user } = authenticate(req); canSubmit(user); limit(`preview:${user.discord_id}`, 10, 60000); return send(res, 200, await inspect(requestUrl.searchParams.get('url'))); }
       if (path === '/api/submissions' && method === 'GET') { const { user } = authenticate(req); return send(res, 200, { items: store.listOwn(user.discord_id).map(row => store.entryDTO(row, true)) }); }
       if (path === '/api/submissions' && method === 'POST') {
@@ -250,8 +265,13 @@ export function createApp({ config, store, discord = createDiscordAdapter(config
         if (!ownMatch[2] && method === 'PATCH') {
           canSubmit(user); limit(`edit:${user.discord_id}`, 30, 60000);
           const body = await readJSON(req);
-          const merged = { name: row.name, description: row.description, author: row.author, sourceType: row.source_type, sourceUrl: row.source_url, icon: row.icon, tags: JSON.parse(row.tags_json), visibility: row.visibility, visibilitySourceUrl: row.visibility_source_url, type:row.product_type,distribution:row.distribution,platforms:JSON.parse(row.platforms_json),websiteUrl:row.website_url,classification:row.classification, ...body };
+          const merged = { name: row.name, description: row.description, author: row.author, sourceType: row.source_type, sourceUrl: row.source_url, githubUrl:row.github_url,discordUrl:row.discord_url, icon: row.icon, tags: JSON.parse(row.tags_json), visibility: row.visibility, visibilitySourceUrl: row.visibility_source_url, type:row.product_type,distribution:row.distribution,platforms:JSON.parse(row.platforms_json),websiteUrl:row.website_url,classification:row.classification, ...body };
           if (merged.sourceType === 'discord' && Object.hasOwn(body, 'sourceUrl') && !Object.hasOwn(body, 'visibilitySourceUrl')) merged.visibilitySourceUrl = null;
+          // Legacy edits to the primary URL keep its display link in sync.
+          if (Object.hasOwn(body,'sourceUrl') || Object.hasOwn(body,'sourceType')) {
+            const primary=merged.sourceType==='github'?'githubUrl':'discordUrl';
+            if (!Object.hasOwn(body,primary)) merged[primary]=merged.sourceUrl;
+          }
           const input = submissionInput(merged); if (input.sourceType === 'github') input.sourceUrl = input.sourceUrl.toLowerCase();
           const duplicate = store.sourceDuplicate(input.sourceUrl, user.discord_id, row.id); if (duplicate) fail(409, 'duplicate_submission', '你已提交过该来源，可在我的投稿中编辑');
           // Always revalidate source. Never carry version/hash information into another repo.
