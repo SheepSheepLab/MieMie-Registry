@@ -1,3 +1,4 @@
+import {REGISTRY_VERSION} from './version.js';
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) 2026 SheepSheep
 import { createHash } from 'node:crypto';
@@ -56,7 +57,7 @@ const assetLock = value => JSON.stringify([value.id, value.name, value.size, val
 // A bounded byte transport, never an arbitrary-URL proxy. No downloaded code is
 // executed or stored. Hub independently repeats every package check on receipt.
 function createReleaseRelay({ hub = false, fetchImpl = fetch, queryTimeoutMs = 15000, assetTimeoutMs = 60000, operationTimeoutMs = 90000, now = Date.now, metadataCacheTtlMs = 120000 } = {}) {
-  const headers = { Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'MieMie-Registry/0.4.0' };
+  const headers = { Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'MieMie-Registry/' + REGISTRY_VERSION };
   const repositoryCache = new Map(), metadataCache = new Map(); let rateReset = 0;
   function limited() {return Object.assign(new Error('GitHub 匿名 API 额度暂时用完，请在配额恢复后重试'), {status: 429, code: 'github_rate_limited', retryAt: new Date(rateReset).toISOString()});}
   function cacheGet(cache, key) {const item = cache.get(key); if (item && item.until > now()) return item.value; cache.delete(key); return undefined;}

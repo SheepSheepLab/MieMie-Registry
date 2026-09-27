@@ -2,7 +2,7 @@
 
 本目录服务属于咩咩（MieMie）开源软件与社区生态，由生态 Founder / 创始人 SheepSheep 发起和创建。SheepSheepLab 是官方 GitHub 开发、维护与发布命名空间，官方项目主要通过该命名空间维护和发布，并欢迎社区贡献者共同参与。
 
-MieMie Extension Ecosystem MVP 的独立目录与 Discord 投稿服务，当前版本 **0.4.0**。软件代码 Copyright © 2026 SheepSheep，采用 [GNU GPL v3.0 or later](LICENSE)，SPDX：`GPL-3.0-or-later`。
+MieMie Extension Ecosystem MVP 的独立目录与 Discord 投稿服务，当前本地候选版本 **0.5.0**（未发布、未部署）。软件代码 Copyright © 2026 SheepSheep，采用 [GNU GPL v3.0 or later](LICENSE)，SPDX：`GPL-3.0-or-later`。
 
 社区贡献者（Community Contributors）保留各自的贡献者身份；除另有说明，贡献内容的版权归相应贡献者所有。
 
@@ -13,6 +13,13 @@ Registry 只持久保存目录元数据、Discord 投稿身份和必要管理记
 只有用户主动提交的记录进入 Catalog；仓库预览不会创建投稿，也不预置 Polisher。
 
 Discord 原帖可以选择“所有人”或“仅该服务器成员”；GitHub 项目可额外提供 Discord 帖子链接作为相同限制的依据。投稿者必须属于该 Guild。权限使用 Guild ID，不使用服务器名称。
+
+## 0.5.0 候选版本说明
+
+- GitHub 与 Discord 项目链接分别展示和保存；可在投稿前核对可见范围所属服务器。
+- 改善拒绝授权和登录失败的结束反馈；加强安装包实际内容与分发组合校验。
+- 沿用现有角色和官方/社区权限，公开 DTO 新增项目链接。包含既有 SQLite v3 → v4 迁移，升级前需备份；不应直接让旧程序打开新 schema。
+- GitHub 当前最新公开 Registry 条目为 0.3.2 Pre-release；0.4.0 功能基线是仓库提交 `5a69488`，未找到公开 0.4.0 Release。本轮 0.5.0 仅为本地候选。真实生产 OAuth 与部署未验收。
 
 ## 本地运行
 
@@ -67,3 +74,6 @@ Catalog 下架／隐藏不远程删除用户已安装的代码。已安装用户
 已主动投稿且当前访问者可见的 GitHub 项目，在读取目录/详情时刷新作者 Release 发现信息。每仓库缓存 15 分钟，每次请求最多开始 4 个刷新，整个进程每小时最多开始 8 次目录自动刷新以保留匿名 GitHub 配额，最多等待 3 秒；慢请求可在后台完成，下次读取显示结果。GitHub 不可用或新 Release 不能验证时保留最近合法记录，不把网络失败视为无更新。安装仍须由 Hub 重新锁定 Release 并校验包。
 
 刷新只修改发现信息，不修改投稿者、展示文案、可见范围或上下架状态，不新增投稿；并发更换仓库后，旧请求不能覆盖新来源。
+
+
+> 隐私历史迁移说明：文中涉及的提交标识已对应至迁移后历史；历史测试时间、结论及贡献归属保持原意，不表示重新执行了当时的验收。原始记录由维护者受保护保存。

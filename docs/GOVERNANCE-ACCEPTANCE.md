@@ -1,5 +1,7 @@
 # Governance final acceptance — 0.3.2
 
+> 历史验收记录：下文 Schema 3 是此前治理版本的部署基线。当前本地 0.5.0 候选使用 Schema 4，升级先备份；以 DEPLOYMENT.md、STORAGE.md 为准。本轮未部署。
+
 ## Blocking finding fixed
 
 In 0.3.1, an author changing their own Official submission to Community implicitly set `moderation_protected=0`. This bypassed the Owner-only protection operation and let ordinary moderators subsequently hide the previously protected item. An isolated HTTP/SQLite regression reproduced the failure before the fix.

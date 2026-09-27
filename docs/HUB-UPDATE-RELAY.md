@@ -1,5 +1,7 @@
 # Hub update relay (0.3.1)
 
+> 历史部署记录：下文 0.3.1 / Schema 3 指当时的发布。当前本地 0.5.0 候选使用 Schema 4；部署与恢复请以 DEPLOYMENT.md、STORAGE.md 为准。本轮未部署。
+
 `POST /api/hub/releases/asset` accepts exactly positive integer `releaseId` and
 `assetId` fields. No login is required; the existing allowed-Origin policy,
 per-IP limits, concurrent transfer limits and disconnect cancellation apply.
