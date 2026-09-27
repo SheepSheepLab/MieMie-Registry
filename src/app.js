@@ -109,6 +109,7 @@ export function createApp({ config, store, discord = createDiscordAdapter(config
   }
   function send(res, status, value) { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(value)); }
   const handler = async (req, res) => {
+    let callbackRequestId;
     res.setHeader('X-Content-Type-Options', 'nosniff'); res.setHeader('Referrer-Policy', 'no-referrer'); res.setHeader('Cache-Control', 'no-store');
     res.setHeader('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'");
     if (config.production) res.setHeader('Strict-Transport-Security', 'max-age=31536000');
@@ -153,6 +154,7 @@ export function createApp({ config, store, discord = createDiscordAdapter(config
         const state = requestUrl.searchParams.get('state');
         const flow = [...flows.values()].find(f => f.started && safeEqual(f.state, state));
         if (!flow || flow.expiresAt <= now() || !safeEqual(cookies(req.headers.cookie)[`miemie_oauth_${flow.requestId}`], flow.cookie)) fail(400, 'invalid_state', 'OAuth state 或浏览器会话无效');
+        callbackRequestId = flow.requestId;
         flows.delete(flow.requestId); // one use, including upstream failures
         res.setHeader('Set-Cookie', `miemie_oauth_${flow.requestId}=; Path=/api/auth/callback; Max-Age=0; HttpOnly; SameSite=Lax${config.production ? '; Secure' : ''}`);
         if (requestUrl.searchParams.has('error')) fail(400, 'oauth_denied', 'Discord 授权未完成');
@@ -303,6 +305,9 @@ export function createApp({ config, store, discord = createDiscordAdapter(config
       }
       fail(404, 'not_found', '接口不存在');
     } catch (error) {
+      // A verified callback cannot succeed after denial or exchange failure.
+      // End its polling handoff; invalid state/cookies must not cancel a real flow.
+      if (callbackRequestId) handoffs.delete(callbackRequestId);
       if (res.headersSent) { res.destroy(); return; }
       const status = error.status || 500;
       if (status === 429) res.setHeader('Retry-After', String(error.retryAt ? Math.max(1, Math.ceil((Date.parse(error.retryAt) - now()) / 1000)) : 60));
