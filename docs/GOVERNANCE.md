@@ -42,9 +42,9 @@ PATCH、refresh、Owner 授权在 `BEGIN IMMEDIATE` 内重新读取最新项目�
 
 ## 目录类型
 
-`sourceType` 仍为 github/discord；`type` 为 tavern_extension、standalone_app、web_tool；`distribution` 独立为 managed_install、external_release、open_url。类型规则集中于 `productTypes`，数据库使用可扩展 TEXT 字段，未来可增量增加类型而不重建表。
+`sourceType` 仍为 github/discord；`type` 为 tavern_extension、standalone_app、web_tool；`distribution` 为系统推导的 managed_install、external_release、open_url，投稿者不手动选择。类型规则集中于 `productTypes`，数据库使用可扩展 TEXT 字段，未来可增量增加类型而不重建表。
 
-- Tavern Extension：GitHub + verified Package 才能 managed_install；无 Package 可 external_release。Discord 原帖为 open_url。
+- Tavern Extension：GitHub 由 Registry 实际检测自动决定，verified Package → managed_install，无 Package 或无效 Package 的合法公开仓库 → external_release，不阻止收录。Discord 原帖固定 external_release，且只对原帖 Guild 成员可见。
 - Standalone App：external_release，仅跳转 GitHub Release 或 Discord 原帖。不下载/执行 EXE、DMG、APK，不要求 Tavern Manifest。
 - Web Tool：open_url，另填 HTTPS `websiteUrl`，来源仍需 GitHub Repo 或 Discord 原帖作为目录来源。网站只用于用户导航，Registry 不抓取。
 - 可选 `platforms`：windows/macos/linux/android/ios/web。

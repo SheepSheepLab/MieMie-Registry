@@ -75,14 +75,14 @@ test('Relist clears retention; new unlisting receives a fresh 180 day retention'
  await mutate(f,a,`/api/submissions/${row.id}/status`,{status:'listed'});assert.equal(f.store.getEntry(row.id).purge_after,null);f.advance(1000);await mutate(f,a,`/api/submissions/${row.id}/status`,{status:'unlisted'});assert.equal(f.store.getEntry(row.id).purge_after,old+1000);
 });
 test('Type/Distribution isolation: native desktop/web listings cannot obtain Tavern managed installation',async t=>{
- const f=await fixture(t),a=await f.login();
+ const f=await fixture(t,{github:{async inspect(){return {compatibility:'external'};}}}),a=await f.login();
  const app=await create(f,a,{type:'standalone_app',distribution:'external_release',platforms:['macos','windows']});assert.equal(app.type,'standalone_app');assert.equal(app.github.compatibility,'external');
  const web=await create(f,a,{sourceUrl:'https://github.com/example/web',type:'web_tool',distribution:'open_url',websiteUrl:'https://author.example/tool',platforms:['web']});assert.equal(web.websiteUrl,'https://author.example/tool');
- for(const changes of [{type:'standalone_app',distribution:'managed_install'},{type:'web_tool',distribution:'managed_install',websiteUrl:'https://author.example'},{type:'tavern_extension',distribution:'managed_install'},{type:'web_tool',websiteUrl:'javascript:alert(1)'},{platforms:['exe']},{classification:'verified'}]){f.advance(600001);assert.equal((await f.req('/api/submissions',{method:'POST',token:a.token,body:submission({sourceUrl:'https://github.com/example/new',...changes})})).status,400);}
+ for(const changes of [{type:'standalone_app',distribution:'managed_install'},{type:'web_tool',distribution:'managed_install',websiteUrl:'https://author.example'},{type:'web_tool',websiteUrl:'javascript:alert(1)'},{platforms:['exe']},{classification:'verified'}]){f.advance(600001);assert.equal((await f.req('/api/submissions',{method:'POST',token:a.token,body:submission({sourceUrl:'https://github.com/example/new',...changes})})).status,400);}
 });
 test('valid Package gets managed_install for old clients; changed repo cannot reuse old discovery',async t=>{
  const f=await fixture(t,{github:{async inspect(url){return {compatibility:url.endsWith('/fixture')?'installable':'external',manifest:{id:'test.fixture'},release:{version:'1.1.3'}};}}}),a=await f.login();const row=await create(f,a);assert.equal(row.distribution,'managed_install');
- assert.equal((await f.req(`/api/submissions/${row.id}`,{method:'PATCH',token:a.token,body:{sourceUrl:'https://github.com/example/other'}})).status,400);assert.equal(f.store.getEntry(row.id).source_url,row.sourceUrl);
+ const changed=await f.req(`/api/submissions/${row.id}`,{method:'PATCH',token:a.token,body:{sourceUrl:'https://github.com/example/other'}});assert.equal(changed.status,200);assert.equal(changed.data.distribution,'external_release');assert.equal(changed.data.github.compatibility,'external');
 });
 test('one-time legacy admin import does not resurrect revoked roles on restart',async t=>{
  const dir=await mkdtemp(join(tmpdir(),'miemie-governance-'));t.after(()=>rm(dir,{recursive:true,force:true}));const f=await fixture(t,{path:join(dir,'test.sqlite')}),o=await f.login('OWNER');await f.login('ADMIN');assert.equal((await grant(f,o,IDS.ADMIN,'admin',false)).status,200);
@@ -126,5 +126,5 @@ test('offline production migration helper verifies backup/candidate and leaves l
  const {spawnSync}=await import('node:child_process'),{openStore:oldStore}=await import('./fixtures/schema-v2-store.mjs');const dir=await mkdtemp(join(tmpdir(),'miemie-preflight-'));t.after(()=>rm(dir,{recursive:true,force:true}));
  const source=join(dir,'live.sqlite'),candidate=join(dir,'candidate.sqlite'),old=oldStore(source);old.upsertIdentity({id:IDS.A,displayName:'Private fixture',username:'private'},1);old.close();
  const result=spawnSync(process.execPath,[new URL('../tools/migrate-verified.mjs',import.meta.url).pathname,source,join(dir,'backups'),candidate],{encoding:'utf8'});assert.equal(result.status,0,result.stderr);assert.doesNotMatch(result.stdout,new RegExp(IDS.A+'|Private fixture'));
- const live=new DatabaseSync(source,{readOnly:true}),next=new DatabaseSync(candidate,{readOnly:true});try{assert.equal(live.prepare('PRAGMA user_version').get().user_version,2);assert.equal(next.prepare('PRAGMA user_version').get().user_version,4);assert.equal(next.prepare('SELECT count(*) AS n FROM identities').get().n,1);}finally{live.close();next.close();}
+ const live=new DatabaseSync(source,{readOnly:true}),next=new DatabaseSync(candidate,{readOnly:true});try{assert.equal(live.prepare('PRAGMA user_version').get().user_version,2);assert.equal(next.prepare('PRAGMA user_version').get().user_version,5);assert.equal(next.prepare('SELECT count(*) AS n FROM identities').get().n,1);}finally{live.close();next.close();}
 });

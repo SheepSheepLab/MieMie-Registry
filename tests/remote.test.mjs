@@ -65,3 +65,12 @@ test('Catalog inspect verifies actual package bytes, structure and build identit
  for(const changes of [{corruptPackage:true},{script:{type:'folder'}},{script:{id:'different'}},{script:{data:{secret:'must not import'}}},{script:{content:'ordinary JavaScript website code'}},{script:{extra:'unknown'}}])assert.equal((await remoteFixture(changes).adapter.inspect(manifest.repository)).compatibility,'external');
  const valid=remoteFixture();assert.equal((await valid.adapter.inspect(manifest.repository)).compatibility,'installable');assert.ok(valid.calls.some(c=>c.url.endsWith('/releases/assets/31')));
 });
+
+import {fixture as serverFixture,submission} from './helpers.mjs';
+test('real Package inspection drives HTTP admission: valid, absent and invalid packages',async t=>{
+ for(const [changes,expected]of [[{},'managed_install'],[{releases:[],rootManifest:false},'external_release'],[{corruptPackage:true},'external_release']]){
+  const remote=remoteFixture(changes),f=await serverFixture(t,{github:remote.adapter}),a=await f.login();
+  const response=await f.req('/api/submissions',{method:'POST',token:a.token,body:submission({distribution:'managed_install'})});
+  assert.equal(response.status,201);assert.equal(response.data.distribution,expected);assert.equal(response.data.sourceType,'github');
+ }
+});

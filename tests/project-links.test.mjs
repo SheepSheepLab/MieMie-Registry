@@ -26,11 +26,12 @@ test('GitHub guild visibility derives from separate Discord post and still verif
  const changeScope=await f.req('/api/submissions/'+good.data.id,{method:'PATCH',token:a.token,body:{visibilitySourceUrl:other}});assert.equal(changeScope.status,403);assert.equal(f.store.getEntry(good.data.id).visibility_source_url,post);
  const publicRow=(await f.req('/api/catalog',{token:a.token})).data.items[0];assert.equal(publicRow.discordUrl,other);assert.equal(publicRow.visibilitySourceUrl,undefined);
 });
-test('secondary repository on Discord submissions cannot transfer official identity',async t=>{
+test('Discord rejects auxiliary repository; official main source still cannot transfer identity',async t=>{
  const f=await fixture(t),a=await f.login(),o=await f.login('OWNER');
- const created=await f.req('/api/submissions',{method:'POST',token:a.token,body:submission({sourceType:'discord',sourceUrl:post,githubUrl:'https://github.com/example/a'})});assert.equal(created.status,201);const row=created.data;
+ assert.equal((await f.req('/api/submissions',{method:'POST',token:a.token,body:submission({sourceType:'discord',sourceUrl:post,githubUrl:'https://github.com/example/a'})})).status,400);
+ const created=await f.req('/api/submissions',{method:'POST',token:a.token,body:submission({sourceType:'discord',sourceUrl:post})});assert.equal(created.status,201);const row=created.data;
  const mark=await f.req('/api/admin/submissions/'+row.id+'/classification',{method:'POST',token:o.token,body:{classification:'official',reason:'Test acceptance',projectIdentityKey:row.projectIdentityKey}});assert.equal(mark.status,200);
- const change=await f.req('/api/submissions/'+row.id,{method:'PATCH',token:a.token,body:{githubUrl:'https://github.com/example/b'}});assert.equal(change.status,409);assert.equal(f.store.getEntry(row.id).github_url,'https://github.com/example/a');assert.equal(f.store.getEntry(row.id).classification,'official');
+ const change=await f.req('/api/submissions/'+row.id,{method:'PATCH',token:a.token,body:{sourceUrl:post.replace('/666666666666666666','/888888888888888888')}});assert.equal(change.status,409);assert.equal(f.store.getEntry(row.id).source_url,post);assert.equal(f.store.getEntry(row.id).classification,'official');
 });
 test('link payload rejects malformed URLs and conflicting primary or visibility aliases',async t=>{
  const f=await fixture(t),a=await f.login();
@@ -42,8 +43,8 @@ test('v3 migration adds links once without publishing an old private visibility 
  const dir=await mkdtemp(join(tmpdir(),'miemie-links-'));t.after(()=>rm(dir,{recursive:true,force:true}));const path=join(dir,'test.sqlite');
  let store=openStore(path);store.upsertIdentity({id:IDS.A,displayName:'Fixture',username:'fixture'},1);
  store.insertSubmission({id:'old',ownerId:IDS.A,input:{...submission(),visibility:'discord_guild',visibilityGuildId:'444444444444444444',visibilitySourceUrl:post,icon:null},github:null,time:1});
- store.db.exec('ALTER TABLE submissions DROP COLUMN github_url; ALTER TABLE submissions DROP COLUMN discord_url; PRAGMA user_version=3;');const before={...store.getEntry('old')};store.close();
- for(let i=0;i<2;i++){store=openStore(path);const row=store.getEntry('old');for(const[k,v]of Object.entries(before))assert.deepEqual(row[k],v);assert.equal(store.entryDTO(row).githubUrl,row.source_url);assert.equal(store.entryDTO(row).discordUrl,null);assert.equal(store.db.prepare('PRAGMA user_version').get().user_version,4);store.close();}
+ store.db.exec('ALTER TABLE submissions DROP COLUMN discord_post_url; PRAGMA user_version=3;');const before={...store.getEntry('old')};store.close();
+ for(let i=0;i<2;i++){store=openStore(path);const row=store.getEntry('old');for(const[k,v]of Object.entries(before))assert.deepEqual(row[k],v);assert.equal(store.entryDTO(row).githubUrl,row.source_url);assert.equal(store.entryDTO(row).discordUrl,null);assert.equal(store.db.prepare('PRAGMA user_version').get().user_version,5);store.close();}
 });
 test('successful OAuth callback closes its own detached window, without affecting PKCE handoff',async t=>{
  const f=await fixture(t),flow=await f.begin(),response=await f.callback(flow);assert.equal(response.status,200);

@@ -19,6 +19,7 @@ test('Author, authenticated Submitter and default identity are independent for e
   // A name collision must not confer platform ownership.
   f.profiles.A.displayName = f.profiles.A.username = 'SheepSheep';
   for (const who of ['A','ADMIN','OWNER']) {
+    f.memberships[who]=['444444444444444444'];
     const actor = await f.login(who);
     const row = await create(f, actor, {author:who === 'A' ? 'SheepSheep' : '星夜'});
     assert.equal(row.classification, 'community');
@@ -64,7 +65,7 @@ test('only Owner can change either identity direction; DTOs and audit retain sep
       assert.equal(dto.author, '星夜');
       assert.equal(dto.submitter.displayName, f.profiles.A.displayName);
       assert.equal(dto.sourceType, 'discord');
-      assert.equal(dto.distribution, 'open_url');
+      assert.equal(dto.distribution, 'external_release');
     }
     assert.equal((await f.req(`/api/submissions/${row.id}`, {method:'PATCH', token:a.token, body:{description:'Maintainer edit'}})).status, 200);
     assert.equal(f.store.getEntry(row.id).classification, value);
@@ -125,7 +126,7 @@ test('existing schema-v3 explicit identities survive reopen; absent DTO identity
     assert.deepEqual({...reopened.getEntry('existing')}, before);
     const legacy = {...before}; delete legacy.classification;
     assert.equal(reopened.entryDTO(legacy).classification, 'community');
-    assert.equal(reopened.db.prepare('PRAGMA user_version').get().user_version, 4);
+    assert.equal(reopened.db.prepare('PRAGMA user_version').get().user_version, 5);
   } finally {reopened.close();}
 });
 
@@ -137,6 +138,7 @@ const metadata = (changes = {}) => ({owner:'example', repo:'fixture', compatibil
 test('official project selectors are locked for submitter, Publisher, Admin and Owner; demote/edit/reaccept works', async t => {
   const f = await fixture(t), owner = await f.login('OWNER');
   for (const who of ['A','ADMIN','OWNER']) {
+    f.memberships[who]=['444444444444444444'];
     const actor = who === 'OWNER' ? owner : await f.login(who);
     f.store.setRole(IDS[who], 'official_publisher', true);
     const row = await create(f, actor);

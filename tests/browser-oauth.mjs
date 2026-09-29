@@ -48,7 +48,7 @@ const app = createApp({config, store, rateLimit: 1000,
     },
     async listGuilds(token) {assert.equal(token, 'fixture-only-discord-access-token'); return isMember ? [GUILD] : [];},
   },
-  github: {async inspect() {throw Error('This browser fixture must not inspect a real repository');}},
+  github: {async inspect(url) {assert.equal(url,'https://github.com/developmentfixture/public-project');return {compatibility:'external',reason:'Local fixture without a Package'};}},
   githubRelay: {async read() {throw Error('This browser fixture must not download a real package');}},
 });
 const registryServer = createServer((req, res) => {
@@ -92,7 +92,8 @@ async function execute(login){
  });
  await check('Active submission alone creates the Guild-restricted Catalog entry',async()=>{
   assert((await catalog()).total===0,'Fixture catalog must start empty');
-  item=await client.api('/api/submissions',{method:'POST',authenticated:true,body:{name:'Development Fixture Restricted',author:'Separate Fixture Author',description:'Guild ACL browser fixture',sourceType:'discord',sourceUrl:'https://discord.com/channels/'+GUILD+'/755555555555555555/766666666666666666',icon:'',tags:['fixture'],visibility:'discord_guild'}});
+  item=await client.api('/api/submissions',{method:'POST',authenticated:true,body:{name:'Development Fixture Restricted',author:'Separate Fixture Author',description:'Guild ACL browser fixture',sourceType:'discord',sourceUrl:'https://discord.com/channels/'+GUILD+'/755555555555555555/766666666666666666',icon:'',tags:['fixture'],visibility:'public'}});
+  assert(item.visibility==='discord_guild'&&item.distribution==='external_release','Discord public hint bypassed canonicalization');
   assert(item.author==='Separate Fixture Author'&&item.submitter.displayName==='Development Fixture Member','Author and submitter not separated');
  });
  await check('Authenticated member receives the entry and authorized total',async()=>{
@@ -120,7 +121,7 @@ async function execute(login){
   assert((await catalog()).total===1,'Relist failed');
  });
  await check('Public entries remain visible without login',async()=>{
-  await client.api('/api/submissions',{method:'POST',authenticated:true,body:{name:'Development Fixture Public',author:'Separate Fixture Author',description:'Public browser fixture',sourceType:'discord',sourceUrl:'https://discord.com/channels/'+GUILD+'/755555555555555555/777777777777777777',icon:'',tags:[],visibility:'public'}});
+  await client.api('/api/submissions',{method:'POST',authenticated:true,body:{name:'Development Fixture Public',author:'Separate Fixture Author',description:'Public browser fixture',sourceType:'github',sourceUrl:'https://github.com/developmentfixture/public-project',icon:'',tags:[],visibility:'public'}});
   assert((await anonymous('/api/catalog')).body.total===1,'Public entry unavailable');
  });
  await check('Logout clears identity and restricted Catalog access immediately',async()=>{

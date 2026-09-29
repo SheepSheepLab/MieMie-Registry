@@ -11,8 +11,8 @@ export function rolesFor(config,store,user) {
 export function validateProduct(input,github,previous=null) {
   // Submission content is not an identity assignment path, even for the Owner.
   if(input.classification!==(previous?.classification??'community'))fail(403,'identity_readonly','扩展身份只能由 Owner 在治理后台修改');
-  validateDistribution(input.type,input.sourceType,input.distribution);
-  if(input.distribution==='managed_install'&&(input.type!=='tavern_extension'||input.sourceType!=='github'||github?.compatibility!=='installable'))fail(400,'package_required','托管安装需要有效 Tavern Extension Package');
+  validateDistribution(input.type,input.sourceType,input.distribution,github);
+  if(input.distribution==='managed_install'&&(input.type!=='tavern_extension'||input.sourceType!=='github'||github?.compatibility!=='installable'))fail(400,'package_required','仅通过标准 Package 验证的 GitHub 酒馆扩展支持 Hub 安装。');
 }
 export function handleGovernance({path,method,body,auth,store,config,now,query}) {
   if(!auth.isAdmin)fail(403,'forbidden','需要管理员权限');
