@@ -4,6 +4,7 @@
 import {DatabaseSync} from 'node:sqlite';
 import {copyFile,chmod,stat} from 'node:fs/promises';
 import {resolve} from 'node:path';
+import {discordLocation,productDistribution} from '../src/validation.js';
 import {openStore} from '../src/store.js';
 import {backupDatabase} from './sqlite-backup.mjs';
 process.umask(0o077);
@@ -16,20 +17,26 @@ const prior=new DatabaseSync(snapshot,{readOnly:true});
 try {
  if(prior.prepare('PRAGMA integrity_check').get().integrity_check!=='ok'||prior.prepare('PRAGMA foreign_key_check').all().length)throw Error('Backup integrity failed');
  const schema=prior.prepare('PRAGMA user_version').get().user_version;
- if(![2,3].includes(schema))throw Error('Expected production schema 2 or 3');
+ if(![2,3,4].includes(schema))throw Error('Expected production schema 2, 3 or 4');
  await copyFile(snapshot,candidate);await chmod(candidate,0o600);
  const migrated=openStore(candidate);
  try {
   for(const table of ['identities','avatars','sessions','submissions','audit',...(schema>=3?['roles','governance_settings']:[])]){
-   const columns=prior.prepare(`PRAGMA table_info(${table})`).all().map(r=>r.name).join(',');
+   const columns=prior.prepare(`PRAGMA table_info(${table})`).all().map(r=>r.name).filter(name=>table!=='submissions'||!['github_url','discord_url'].includes(name)).join(',');
    const before=prior.prepare(`SELECT ${columns} FROM ${table} ORDER BY rowid`).all();
+   // Only documented Discord ACL and derived distribution normalization change old columns.
+   if(table==='submissions')for(const row of before){if(Object.hasOwn(row,'distribution'))row.distribution=productDistribution(row.product_type,row.source_type,JSON.parse(row.github_json||'null'));if(row.source_type==='discord'){const location=discordLocation(row.source_url);row.visibility='discord_guild';row.visibility_guild_id=location.guildId;row.visibility_source_url=row.source_url;}}
    const after=migrated.db.prepare(`SELECT ${columns} FROM ${table} ORDER BY rowid`).all();
    if(JSON.stringify(before)!==JSON.stringify(after))throw Error('Existing records changed: '+table);
+  }
+  if(schema===4)for(const row of prior.prepare('SELECT id,source_type,discord_url FROM submissions').all()){
+   const actual=migrated.getEntry(row.id).discord_post_url;
+   if(actual!==(row.source_type==='github'?row.discord_url||null:null))throw Error('Discord post migration mismatch');
   }
   const rows=migrated.db.prepare("SELECT product_type,distribution,github_json FROM submissions WHERE source_type='github'").all();
   for(const row of rows)if(schema===2&&JSON.parse(row.github_json||'null')?.compatibility==='installable'&&(row.product_type!=='tavern_extension'||row.distribution!=='managed_install'))throw Error('Package migration mismatch');
   if(migrated.db.prepare('PRAGMA integrity_check').get().integrity_check!=='ok'||migrated.db.prepare('PRAGMA foreign_key_check').all().length)throw Error('Candidate integrity failed');
   migrated.db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
  } finally {migrated.close();}
- console.log(JSON.stringify({status:'prepared',schema:4,snapshot,candidate,existingRows:'unchanged'}));
+ console.log(JSON.stringify({status:'prepared',schema:5,snapshot,candidate,existingRows:'preserved except redundant aliases and Discord guild-only and derived distribution normalization'}));
 }finally{prior.close();}

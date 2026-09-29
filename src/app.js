@@ -2,7 +2,7 @@ import {REGISTRY_VERSION} from './version.js';
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) 2026 SheepSheep
 import { randomBytes, randomUUID, createHash, createHmac, timingSafeEqual } from 'node:crypto';
-import { fail, plain, text, submissionInput, discordLocation } from './validation.js';
+import { fail, plain, text, submissionInput, discordLocation, productDistribution } from './validation.js';
 import { createDiscordAdapter, createGitHubAdapter } from './remote.js';
 import { createGitHubRelay, createHubReleaseRelay } from './github-relay.js';
 import {rolesFor,validateProduct,handleGovernance} from './governance.js';
@@ -125,7 +125,7 @@ export function createApp({ config, store, discord = createDiscordAdapter(config
       if (method === 'OPTIONS') { res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, OPTIONS'); res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type'); res.setHeader('Access-Control-Max-Age', '600'); res.writeHead(204); res.end(); return; }
       if (!['GET', 'POST', 'PATCH'].includes(method)) fail(405, 'method_not_allowed', '不支持此请求');
       if (method !== 'GET' && (!origin || !config.allowedOrigins.has(origin))) fail(403, 'origin_required', '写入请求必须来自已配置页面');
-      if (path === '/health' && method === 'GET') {if(store.db.prepare('PRAGMA user_version').get().user_version!==4)throw Error('schema');store.db.prepare('SELECT id FROM submissions LIMIT 1').get();return send(res, 200, { status: 'ok', version: REGISTRY_VERSION });}
+      if (path === '/health' && method === 'GET') {if(store.db.prepare('PRAGMA user_version').get().user_version!==5)throw Error('schema');store.db.prepare('SELECT id FROM submissions LIMIT 1').get();return send(res, 200, { status: 'ok', version: REGISTRY_VERSION });}
       if(path==='/admin'&&method==='GET') {
         res.setHeader('Content-Security-Policy',"default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'");
         res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'});res.end(adminPage);return;
@@ -247,15 +247,15 @@ export function createApp({ config, store, discord = createDiscordAdapter(config
         // Return only the requested membership, never the user's complete guild list.
         return send(res,200,{sourceUrl:location.url,guild:{id:guild.id,name:guild.name,iconUrl:guild.iconUrl||null},member:true});
       }
-      if (path === '/api/github/preview' && method === 'GET') { const { user } = authenticate(req); canSubmit(user); limit(`preview:${user.discord_id}`, 10, 60000); return send(res, 200, await inspect(requestUrl.searchParams.get('url'))); }
+      if (path === '/api/github/preview' && method === 'GET') { const { user } = authenticate(req); canSubmit(user); limit(`preview:${user.discord_id}`, 10, 60000); return send(res, 200, await inspect(requestUrl.searchParams.get('url'),true)); }
       if (path === '/api/submissions' && method === 'GET') { const { user } = authenticate(req); return send(res, 200, { items: store.listOwn(user.discord_id).map(row => store.entryDTO(row, true)) }); }
       if (path === '/api/submissions' && method === 'POST') {
         const auth = authenticate(req), { user } = auth; canSubmit(user); limit(`submit:${user.discord_id}`, 5, 600000);
         if (store.countOwn(user.discord_id) >= 100) fail(429, 'submission_limit', '当前每个投稿者最多 100 条项目');
         const body=await readJSON(req);const input = submissionInput(body); if (input.sourceType === 'github') input.sourceUrl = input.sourceUrl.toLowerCase();
         if (store.sourceDuplicate(input.sourceUrl, user.discord_id)) fail(409, 'duplicate_submission', '你已提交过该来源，可在我的投稿中编辑');
-        const discovered = input.sourceType === 'github' ? await inspect(input.sourceUrl) : null, id = randomUUID(), time = now();
-        if(body.distribution===undefined&&input.type==='tavern_extension'&&discovered?.compatibility==='installable')input.distribution='managed_install';
+        const discovered = input.sourceType === 'github' ? await inspect(input.sourceUrl,input.type==='tavern_extension') : null, id = randomUUID(), time = now();
+        input.distribution=productDistribution(input.type,input.sourceType,discovered);
         await validateVisibility(input, auth);
         const refreshed=authenticate(req);canSubmit(refreshed.user);validateProduct(input,discovered);
         if (store.sourceDuplicate(input.sourceUrl, user.discord_id)) fail(409, 'duplicate_submission', '你已提交过该来源，可在我的投稿中编辑');
@@ -268,17 +268,17 @@ export function createApp({ config, store, discord = createDiscordAdapter(config
         if (!ownMatch[2] && method === 'PATCH') {
           canSubmit(user); limit(`edit:${user.discord_id}`, 30, 60000);
           const body = await readJSON(req);
-          const merged = { name: row.name, description: row.description, author: row.author, sourceType: row.source_type, sourceUrl: row.source_url, githubUrl:row.github_url,discordUrl:row.discord_url, icon: row.icon, tags: JSON.parse(row.tags_json), visibility: row.visibility, visibilitySourceUrl: row.visibility_source_url, type:row.product_type,distribution:row.distribution,platforms:JSON.parse(row.platforms_json),websiteUrl:row.website_url,classification:row.classification, ...body };
+          const merged = { name: row.name, description: row.description, author: row.author, sourceType: row.source_type, sourceUrl: row.source_url, discordPostUrl:row.discord_post_url, icon: row.icon, tags: JSON.parse(row.tags_json), visibility: row.visibility, visibilitySourceUrl: row.visibility_source_url, type:row.product_type,platforms:JSON.parse(row.platforms_json),websiteUrl:row.website_url,classification:row.classification, ...body };
           if (merged.sourceType === 'discord' && Object.hasOwn(body, 'sourceUrl') && !Object.hasOwn(body, 'visibilitySourceUrl')) merged.visibilitySourceUrl = null;
-          // Legacy edits to the primary URL keep its display link in sync.
-          if (Object.hasOwn(body,'sourceUrl') || Object.hasOwn(body,'sourceType')) {
-            const primary=merged.sourceType==='github'?'githubUrl':'discordUrl';
-            if (!Object.hasOwn(body,primary)) merged[primary]=merged.sourceUrl;
+          // Do not mix a stored new field with an explicitly edited old alias.
+          if (!Object.hasOwn(body,'discordPostUrl') && (merged.sourceType==='discord' || Object.hasOwn(body,'discordUrl'))) {
+            merged.discordPostUrl = merged.sourceType==='github' ? body.discordUrl : null;
           }
           const input = submissionInput(merged); if (input.sourceType === 'github') input.sourceUrl = input.sourceUrl.toLowerCase();
           const duplicate = store.sourceDuplicate(input.sourceUrl, user.discord_id, row.id); if (duplicate) fail(409, 'duplicate_submission', '你已提交过该来源，可在我的投稿中编辑');
           // Always revalidate source. Never carry version/hash information into another repo.
-          const discovered = input.sourceType === 'github' ? await inspect(input.sourceUrl, input.sourceUrl !== row.source_url) : null, time = now();
+          const discovered = input.sourceType === 'github' ? await inspect(input.sourceUrl, input.type==='tavern_extension' || input.sourceUrl !== row.source_url) : null, time = now();
+          input.distribution=productDistribution(input.type,input.sourceType,discovered);
           await validateVisibility(input, auth);
           const refreshed=authenticate(req);canSubmit(refreshed.user);own(row.id,user);validateProduct(input,discovered,row);
           if (store.sourceDuplicate(input.sourceUrl, user.discord_id, row.id)) fail(409, 'duplicate_submission', '你已提交过该来源，可在我的投稿中编辑');

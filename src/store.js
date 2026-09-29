@@ -4,6 +4,7 @@ import { DatabaseSync, backup } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import {discordLocation, discordPost, productDistribution} from './validation.js';
 import {canonicalClassification, projectIdentity, projectIdentityKey, assertOfficialProject} from './extension-identity.js';
 export function openStore(path) {
   if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
@@ -11,7 +12,7 @@ export function openStore(path) {
   db.exec('PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;');
   try {
   const schema = db.prepare('PRAGMA user_version').get().user_version;
-  if (schema > 4) throw new Error('数据库版本高于当前程序；请使用较新程序');
+  if (schema > 5) throw new Error('数据库版本高于当前程序；请使用较新程序');
   if (schema === 0) db.exec(`BEGIN;
     CREATE TABLE identities (discord_id TEXT PRIMARY KEY, display_name TEXT NOT NULL, username TEXT NOT NULL, avatar_key TEXT, profile_updated_at INTEGER NOT NULL, banned INTEGER NOT NULL DEFAULT 0);
     CREATE TABLE avatars (key TEXT PRIMARY KEY, bytes BLOB NOT NULL, mime TEXT NOT NULL);
@@ -63,6 +64,23 @@ export function openStore(path) {
     UPDATE submissions SET discord_url=source_url WHERE source_type='discord';
     PRAGMA user_version=4;
     COMMIT;`);
+  // v5 removes redundant source aliases. Normalize community visibility using the
+  // same strict parser as submissions, before any writes; malformed data rolls back.
+  if (schema < 5) {
+    db.exec('BEGIN IMMEDIATE');
+    const rows = db.prepare('SELECT id,source_type,source_url,discord_url,product_type,github_json FROM submissions').all();
+    const normalized = rows.map(row => {
+      if (row.source_type === 'discord') return {...row, location:discordLocation(row.source_url), post:null};
+      if (row.source_type !== 'github') throw new Error('Unknown submission source in schema 4');
+      return {...row, location:null, post:row.discord_url ? discordPost(row.discord_url) : null};
+    });
+    db.exec('ALTER TABLE submissions ADD COLUMN discord_post_url TEXT');
+    for (const row of normalized) {
+      db.prepare('UPDATE submissions SET discord_post_url=?,distribution=? WHERE id=?').run(row.post,productDistribution(row.product_type,row.source_type,JSON.parse(row.github_json||'null')),row.id);
+      if (row.location) db.prepare("UPDATE submissions SET visibility='discord_guild',visibility_guild_id=?,visibility_source_url=source_url WHERE id=?").run(row.location.guildId,row.id);
+    }
+    db.exec('ALTER TABLE submissions DROP COLUMN github_url; ALTER TABLE submissions DROP COLUMN discord_url; PRAGMA user_version=5; COMMIT;');
+  }
   } catch(error) {try {db.exec('ROLLBACK');} catch {} db.close();throw error;}
   const getIdentity = id => db.prepare('SELECT * FROM identities WHERE discord_id=?').get(id);
   function upsertIdentity(profile, now) {
@@ -80,7 +98,7 @@ export function openStore(path) {
   function profileDTO(identity) { return { displayName: identity.display_name, avatarUrl: identity.avatar_key ? `/api/avatars/${identity.avatar_key}` : null }; }
   function entryDTO(row, privateView = false) {
     const github = row.github_json ? JSON.parse(row.github_json) : null;
-    const dto = { id: row.id, visibility: row.visibility, extensionId: github?.manifest?.id || null, name: row.name, description: row.description, author: row.author, classification: canonicalClassification(row.classification), type: row.product_type, distribution: row.distribution, platforms: JSON.parse(row.platforms_json), websiteUrl: row.website_url, submitter: profileDTO(getIdentity(row.submitter_id)), githubUrl: row.source_type==='github'?row.source_url:row.github_url, discordUrl: row.source_type==='discord'?row.source_url:row.discord_url, sourceType: row.source_type, sourceUrl: row.source_url, icon: github?.manifest?.iconUrl || row.icon || null, tags: JSON.parse(row.tags_json), version: github?.release?.version || null, github, createdAt: new Date(row.created_at).toISOString(), updatedAt: new Date(row.updated_at).toISOString() };
+    const dto = { id: row.id, visibility: row.visibility, extensionId: github?.manifest?.id || null, name: row.name, description: row.description, author: row.author, classification: canonicalClassification(row.classification), type: row.product_type, distribution: row.distribution, platforms: JSON.parse(row.platforms_json), websiteUrl: row.website_url, submitter: profileDTO(getIdentity(row.submitter_id)), githubUrl: row.source_type==='github'?row.source_url:null, discordUrl: row.source_type==='discord'?row.source_url:row.discord_post_url, discordPostUrl: row.source_type==='github'?row.discord_post_url:null, sourceType: row.source_type, sourceUrl: row.source_url, icon: github?.manifest?.iconUrl || row.icon || null, tags: JSON.parse(row.tags_json), version: github?.release?.version || null, github, createdAt: new Date(row.created_at).toISOString(), updatedAt: new Date(row.updated_at).toISOString() };
     if (privateView) Object.assign(dto, { projectIdentityKey: projectIdentityKey(row), status: row.owner_status, moderation: row.moderation, moderationReason: row.moderation_reason, visibilitySourceUrl: row.visibility_source_url, moderationProtected: !!row.moderation_protected, unlistedAt: row.unlisted_at, purgeAfter: row.purge_after });
     return dto;
   }
@@ -112,18 +130,18 @@ export function openStore(path) {
     db.prepare('INSERT INTO submissions(id,owner_id,name,description,author,source_type,source_url,icon,tags_json,github_json,created_at,updated_at,visibility,visibility_guild_id,visibility_source_url,discord_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(id,ownerId,input.name,input.description,input.author,input.sourceType,input.sourceUrl,input.icon,JSON.stringify(input.tags),github?JSON.stringify(github):null,time,time,input.visibility||'public',input.visibilityGuildId||null,input.visibilitySourceUrl||null,input.discord?JSON.stringify(input.discord):null);
     // Identity is assigned only by governance; never copy it from submission input.
     db.prepare('UPDATE submissions SET submitter_id=? WHERE id=?').run(ownerId,id);
-    setProduct(id,input);
+    setProduct(id,input,github);
   }
   function updateSubmission({id,input,github,time}) {
     // The caller holds BEGIN IMMEDIATE; compare with the latest accepted project.
     const current = getEntry(id);
-    assertOfficialProject(current, {...current, source_type:input.sourceType, source_url:input.sourceUrl, product_type:input.type, website_url:input.websiteUrl, github_url:input.githubUrl, github_json:github ? JSON.stringify(github) : null});
+    assertOfficialProject(current, {...current, source_type:input.sourceType, source_url:input.sourceUrl, product_type:input.type, website_url:input.websiteUrl, github_json:github ? JSON.stringify(github) : null});
     db.prepare('UPDATE submissions SET name=?,description=?,author=?,source_type=?,source_url=?,icon=?,tags_json=?,github_json=?,updated_at=?,visibility=?,visibility_guild_id=?,visibility_source_url=?,discord_json=? WHERE id=?').run(input.name,input.description,input.author,input.sourceType,input.sourceUrl,input.icon,JSON.stringify(input.tags),github?JSON.stringify(github):null,time,input.visibility,input.visibilityGuildId,input.visibilitySourceUrl,input.discord?JSON.stringify(input.discord):null,id);
-    setProduct(id,input);
+    setProduct(id,input,github);
   }
-  function setProduct(id,input) {
-    db.prepare('UPDATE submissions SET github_url=?,discord_url=? WHERE id=?').run(input.githubUrl||null,input.discordUrl||null,id);
-    db.prepare('UPDATE submissions SET product_type=?,distribution=?,platforms_json=?,website_url=? WHERE id=?').run(input.type||'tavern_extension',input.distribution||(input.sourceType==='discord'?'open_url':'external_release'),JSON.stringify(input.platforms||[]),input.websiteUrl||null,id);
+  function setProduct(id,input,github) {
+    db.prepare('UPDATE submissions SET discord_post_url=? WHERE id=?').run(input.sourceType==='github' ? input.discordPostUrl||null : null,id);
+    db.prepare('UPDATE submissions SET product_type=?,distribution=?,platforms_json=?,website_url=? WHERE id=?').run(input.type||'tavern_extension',productDistribution(input.type||'tavern_extension',input.sourceType,github),JSON.stringify(input.platforms||[]),input.websiteUrl||null,id);
   }
   // Only called by Owner governance. A downgrade cannot remove Owner protection.
   function setClassification(id,value,time) {
@@ -149,7 +167,7 @@ export function openStore(path) {
       }
       const previous = current.github_json ? JSON.parse(current.github_json) : null;
       if (github.compatibility !== 'installable' && previous?.compatibility === 'installable') return {changes:0};
-      return db.prepare('UPDATE submissions SET github_json=? WHERE id=?').run(candidate.github_json,row.id);
+      return db.prepare('UPDATE submissions SET github_json=?,distribution=? WHERE id=?').run(candidate.github_json,productDistribution(current.product_type,current.source_type,github),row.id);
     });
   }
   const setOwnerStatus=(id,status,time)=>db.prepare("UPDATE submissions SET owner_status=?,updated_at=?,unlisted_at=CASE WHEN ?='listed' THEN NULL ELSE COALESCE(unlisted_at,?) END,purge_after=CASE WHEN ?='listed' THEN NULL ELSE COALESCE(purge_after,?) END WHERE id=?").run(status,time,status,time,status,time+180*86400000,id);

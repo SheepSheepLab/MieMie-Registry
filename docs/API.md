@@ -81,11 +81,13 @@ OAuth Secret、Discord Token、verifier 和 Registry 会话不写 URL 或持久�
 - `GET /api/submissions` → `{items}`，只返回本人投稿，额外含 `status`（listed/unlisted）、`moderation`（visible/hidden/unlisted）和 `moderationReason`。
 - `GET /api/github/preview?url=https://github.com/owner/repo` → GitHub 发现对象，供表单预填；必须让用户确认展示信息。
 - `GET /api/discord/verify?url=<Discord channels URL>` → `{sourceUrl,guild:{id,name,iconUrl},member:true}`。需登录且可投稿，每账号 10 次/分钟；只返回当前账号已加入的指定服务器，不读取帖子内容、不保存可见范围、不返回全部服务器列表。无成员资格 403，上游不可用 503，会话失效 401。保存仍重新验证，不能用这个结果作为授权凭据。
-- `POST /api/submissions` → 201，新项目默认 listed，visibility 默认 public；不会扫描仓库自动创建条目。
+- `POST /api/submissions` → 201，新项目默认 listed，GitHub visibility 默认 public，Discord 强制 discord_guild；不会扫描仓库自动创建条目。
 - `PATCH /api/submissions/:id` → 修改本人展示字段，不能更改 owner、ID、缓存版本或内部字段。
 - `POST /api/submissions/:id/status {status:"listed"|"unlisted"}`。
 
-创建字段：`name`（1–100）、`description`（1–2000）、`author`（1–100）、`sourceType`、`sourceUrl`、可选 `icon`、`tags`（最多 8 个，每个最多 30 字符）、`visibility`（public / discord_guild）与 `visibilitySourceUrl`，以及可选 `githubUrl` / `discordUrl` 两个独立展示链接。主来源对应的链接必须与 `sourceUrl` 一致；旧客户端只传 `sourceUrl` 仍受支持。编辑允许同一字段集合；sourceUrl 重新验证并重新产生仓库发现信息，不继承旧仓库 Hash。
+创建字段：`name`（1–100）、`description`（1–2000）、`author`（1–100）、`sourceType`、`sourceUrl`、可选 `icon`、`tags`（最多 8 个，每个最多 30 字符）、`visibility` 与 `visibilitySourceUrl`。GitHub 来源可补充 `discordPostUrl`（仅正式 Discord channels URL），它只是导航资料，不验证作者、帖子内容或安装能力，不要求成员资格。Discord 来源不接受辅助 `githubUrl` 或 `discordPostUrl`。
+
+Hub 0.8.0 兼容：请求仍接受 `githubUrl` / `discordUrl`；主来源别名必须与 `sourceUrl` 一致，GitHub 的 `discordUrl` 映射为 `discordPostUrl`。同时传入新旧发布帖字段时必须一致。PATCH 只编辑旧别名仍可更新或清空辅助链接；未提供时保留。DTO 保留派生字段：GitHub `githubUrl=sourceUrl, discordUrl=discordPostUrl`；Discord `githubUrl=null, discordUrl=sourceUrl, discordPostUrl=null`。数据库不再重复存储别名。编辑允许同一字段集合；sourceUrl 重新验证并重新产生仓库发现信息，不继承旧仓库 Hash。
 
 ## Governance
 
@@ -106,7 +108,7 @@ OAuth Secret、Discord Token、verifier 和 Registry 会话不写 URL 或持久�
 
 Public DTO 返回 `classification:"official"|"community"`，与 `author`、认证账户的公开 `submitter` profile 独立；不返回 submitter/owner ID、Hold、Retention 或审计。旧记录缺失或非法值在 Store、Catalog、普通编辑、治理和 Admin 列表中统一按 community；客户端显式传入非法 classification（包括 null）仍返回 400 `invalid_classification`；普通 Manifest 的同名字段不具备身份权威。`canPublishOfficial` 为兼容保留，仅 Owner 为 true；历史 `official_publisher` 角色不再获得任何身份修改权。
 
-Official 投稿的项目定位字段不可直接变更，Owner 编辑本人内容也一样：sourceType、规范化 sourceUrl、产品 type、websiteUrl、GitHub owner/repo、Manifest id/repository，以及 Discord 来源记录的补充 GitHub repository。GitHub 项目的讨论帖链接不改变其安装项目身份。必须先由 Owner 降为 community，再修改项目，最后重新确认 official。版本、名称、作者、简介等内容维护不视为项目身份变化，分发方式仍是独立维度。
+Official 投稿的项目定位字段不可直接变更，Owner 编辑本人内容也一样：sourceType、规范化 sourceUrl、产品 type、websiteUrl、GitHub owner/repo、Manifest id/repository。GitHub 项目的讨论帖链接不改变其安装项目身份。必须先由 Owner 降为 community，再修改项目，最后重新确认 official。版本、名称、作者、简介等内容维护不视为项目身份变化，分发方式仍是独立维度。
 
 PATCH 在最终写入事务中检查最新记录，项目不匹配返回 409 `official_project_identity_mismatch`，不更新内容或自动降级。Catalog 自动 refresh 使用同一检查，冲突时保留已接纳记录并写入 Owner 可见的 `project_identity_mismatch` 审计（actor=`server-refresh`，含原项目和 attempted 项目）；Catalog 仍可读取最后接受的记录。相同冲突不重复写审计。普通 refresh 只更新 GitHub 缓存，不覆盖身份、保护、Hold 或 moderation。
 
@@ -118,9 +120,13 @@ PATCH 在最终写入事务中检查最新记录，项目不匹配返回 409 `of
 
 ## Guild ACL 投稿字段
 
-`visibility` 默认 `public`。`discord_guild` 仅允许从有效 Discord `channels/<guild>/<channel>[/<message>]` 链接确定权限范围；服务器名称不参与判断。Discord 来源直接使用 `sourceUrl`；GitHub 来源优先使用独立的 `visibilitySourceUrl` 作为范围依据，与公开展示的 `discordUrl` 可以不同；未提供范围字段时兼容以 `discordUrl` 为依据。Discord 主来源仍必须使用其 `sourceUrl` 确定范围，显式范围字段若不一致会被拒绝。客户端不得传入 `visibilityGuildId`、owner 或其他内部字段。消息／频道实际内容不会被读取，此限制只证明 Guild 成员身份，不是频道访问权限验证。
+GitHub 的 `visibility` 默认 `public`；选择 `discord_guild` 时，通过正式 Discord `channels/<guild>/<channel>[/<message>]` parser 确定范围。`visibilitySourceUrl` 与辅助 `discordPostUrl` 独立；未提供范围时兼容以发布帖（含旧 `discordUrl` 别名）为依据。公开 GitHub 项目补充 Discord 发布帖不会触发成员验证。
 
-投稿、编辑受限记录和重新上架均重新验证当前投稿者属于该 Guild；修改来源重新解析，不继承旧 Guild 授权。自己的投稿响应附加 `visibilitySourceUrl` 便于编辑。可见目录只给 `visibility` 标签，不给用户的成员列表或单独的内部 Guild 字段；未经授权完全不返回条目。显式保存的 `githubUrl` / `discordUrl` 随可见条目展示；旧私有 `visibilitySourceUrl` 不会在迁移时自动转为公开链接。Discord 链接自身仍含其结构 ID。
+Discord 来源始终 canonicalize 为 `visibility=discord_guild`、`visibilitySourceUrl=sourceUrl`、Guild ID 来自主原帖。旧客户端传 public 也不能公开它；PATCH 同样强制规范，显式范围若与主来源冲突则拒绝。客户端不得传入内部 Guild ID、owner 或授权信息。
+
+投稿、编辑受限记录和重新上架均重新验证投稿者当前属于该 Guild。复用原 Catalog ACL：未登录仅见公开 GitHub；登录者另可见自己当前所属 Guild 的 GitHub / Discord 项目；无资格时列表、搜索、数量和详情均不泄露记录。只确认 Guild 成员资格，不确认作者身份、channel/message 读取权限或帖子内容。
+
+本人投稿 DTO 附加 `visibilitySourceUrl` 便于编辑；公开 DTO 不提供内部 Guild 字段或成员列表。辅助发布帖随有权可见的条目展示，旧私有 `visibilitySourceUrl` 不会被迁移为辅助发布帖。
 
 同一投稿者的重复来源会被拒绝；不同身份可以提交同一来源，不能据错误响应探测其他人的受限记录。数据库的 Catalog UUID 区分记录；没有“认证作者”推断。禁止恶意堆积由限流、每人总量和管理员治理处理。
 
@@ -135,11 +141,29 @@ Owner 的账号治理列表返回 isOwner/isAdmin 标志，供 UI 标注根身�
 ### Product declaration and install capability
 
 Product types remain `tavern_extension`, `standalone_app`, `web_tool`; GitHub
-Language is not used. Distribution is validated independently in request parsing
-and governance: standalone → external_release; web → open_url; Tavern → legal
-external/open navigation or managed_install. Discord can never managed_install.
-GitHub Tavern external_release remains a submitter declaration, not an install
-permission or machine claim about what the application actually is.
+Language is not used. Catalog admission is independent of machine installation.
+The submission UI exposes no editable distribution field. Registry derives and
+persists `distribution` from source/type and its own GitHub inspection:
+
+- GitHub Tavern: verified `compatibility=installable` → `managed_install`;
+  absent/invalid Package on a valid public repository → `external_release`.
+- Discord Tavern: `external_release`, with the existing mandatory Guild-only ACL.
+- Standalone: `external_release`; Web Tool: `open_url` (HTTPS website required).
+
+Create/edit re-inspects GitHub Tavern even after a preview, then canonicalizes the
+result. No Package does not invalidate a public repository or require a Discord
+source. The preview is informative, not a submission gate. Legacy distribution
+hints are accepted as known enum values but cannot grant installability; an
+explicit managed_install request for Discord/non-Tavern is rejected. A legacy
+Discord open_url hint is stored and returned as external_release. Governance
+independently checks the final combination against the actual inspection.
+
+Catalog offers Install only for verified managed-install Tavern entries;
+external GitHub Tavern links directly to GitHub, Discord Tavern to its original
+post. Accepted cache refreshes update capability and derived distribution together.
+Existing refresh budgets, Official identity protection and retention of a previous
+validated cache on invalid/unreadable release refreshes remain unchanged; no cached
+result can bypass install-time reinspection.
 
 `github.compatibility=installable` now requires the selected release metadata,
 manifest/API/repository identity, actual package bytes/hash/size, helper-script

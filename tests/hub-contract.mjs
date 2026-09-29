@@ -149,10 +149,10 @@ try {
     await a.client.api('/api/submissions/' + github.id, {method: 'PATCH', body: {name: 'Edited Fixture', description: 'Edited through Hub client'}, authenticated: true});
     assert.equal((await a.client.api('/api/catalog/' + github.id)).name, 'Edited Fixture');
     await a.client.api('/api/submissions/' + github.id + '/status', {method: 'POST', body: {status: 'unlisted'}, authenticated: true});
-    assert.equal((await a.client.api('/api/catalog')).total, 1);
+    assert.equal((await a.client.api('/api/catalog')).total, 0);
     assert.equal((await a.client.api('/api/submissions', {authenticated: true})).items.find(item => item.id === github.id).status, 'unlisted');
     await a.client.api('/api/submissions/' + github.id + '/status', {method: 'POST', body: {status: 'listed'}, authenticated: true});
-    assert.equal((await a.client.api('/api/catalog')).total, 2);
+    assert.equal((await a.client.api('/api/catalog')).total, 1);
   });
   await record('a second real Hub session cannot edit or unlist the first identity submissions', async () => {
     await b.client.login(); assert.equal((await b.client.api('/api/submissions', {authenticated: true})).items.length, 0);
@@ -175,7 +175,7 @@ try {
     await admin.client.login(); assert.equal(admin.client.getIdentity().isAdmin, true);assert.equal(admin.client.getIdentity().isOwner,true);assert.equal(admin.client.getIdentity().banned,false);
     const rows = await admin.client.api('/api/admin/submissions', {authenticated: true}); assert.ok(rows.items.some(item => item.ownerDiscordUserId === IDS.A));
     const moderate = action => admin.client.api('/api/admin/submissions/' + github.id + '/moderation', {method: 'POST', authenticated: true, body: {action, reason: 'Development Fixture moderation'}});
-    await moderate('hide'); assert.equal((await a.client.api('/api/catalog')).total, 1);
+    await moderate('hide'); assert.equal((await a.client.api('/api/catalog')).total, 0);
     const own = (await a.client.api('/api/submissions', {authenticated: true})).items.find(item => item.id === github.id);
     assert.equal(own.status, 'listed'); assert.equal(own.moderation, 'hidden'); await moderate('restore');
     const ban = banned => admin.client.api('/api/admin/identities/' + IDS.A + '/ban', {method: 'POST', authenticated: true, body: {banned, reason: 'Development Fixture ban'}});
@@ -239,8 +239,9 @@ try {
     const {status, value} = await anonymous('/api/catalog'); assert.equal(status, 200); const text = JSON.stringify(value);
     for (const secret of [...Object.values(IDS), profiles.A.username, config.clientSecret, config.sessionSecret]) assert.ok(!text.includes(secret));
     for (const field of ['discord_id','owner_id','ownerDiscordUserId','username','email','token','session','moderation','banned']) assert.ok(!text.includes('"' + field + '"'));
-    assert.equal(value.items.find(item => item.id === discord.id).sourceUrl, discord.sourceUrl);
-    assert.equal((await a.client.api('/api/catalog?source=discord&page=1&pageSize=1&q=Fixture')).total, 1);
+    assert.equal(value.items.find(item => item.id === discord.id),undefined);
+    const ownGuild=await a.client.api('/api/catalog/'+discord.id,{authenticated:true});assert.equal(ownGuild.sourceUrl,discord.sourceUrl);assert.equal(ownGuild.discordUrl,discord.sourceUrl);assert.equal(ownGuild.githubUrl,null);assert.equal(ownGuild.discordPostUrl,null);
+    assert.equal((await a.client.api('/api/catalog?source=discord&page=1&pageSize=1&q=Fixture',{authenticated:true})).total, 1);
   });
   await record('expiry clears client identity and successful logout revokes its Registry session', async () => {
     clock += config.sessionTtlMs + 1;
