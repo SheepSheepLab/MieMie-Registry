@@ -1,3 +1,4 @@
+import {createGitHubClient} from '../src/github-client.js';
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Development Fixture / Test Data: fake application values, no external OAuth.
 import test from 'node:test';
@@ -14,7 +15,7 @@ import { openStore } from '../src/store.js';
 import { createApp } from '../src/app.js';
 import { backupDatabase } from '../tools/sqlite-backup.mjs';
 const root = new URL('../', import.meta.url).pathname;
-const production = { NODE_ENV: 'production', PUBLIC_BASE_URL: 'https://registry.miemie-fixture.org', CORS_ORIGINS: 'http://127.0.0.1:8000', DISCORD_CLIENT_ID: '000000000000000001', DISCORD_CLIENT_SECRET: 'development-fixture-not-a-real-client-secret', SESSION_SECRET: 'development-fixture-not-a-real-session-secret' };
+const production = { GITHUB_AUTH_MODE: 'app', GITHUB_APP_ID: '1', GITHUB_APP_INSTALLATION_ID: '2', GITHUB_APP_PRIVATE_KEY_PATH: '/external/test-key.pem', NODE_ENV: 'production', PUBLIC_BASE_URL: 'https://registry.miemie-fixture.org', CORS_ORIGINS: 'http://127.0.0.1:8000', DISCORD_CLIENT_ID: '000000000000000001', DISCORD_CLIENT_SECRET: 'development-fixture-not-a-real-client-secret', SESSION_SECRET: 'development-fixture-not-a-real-session-secret' };
 async function folder(t) { const path = await mkdtemp(join(tmpdir(), 'miemie-deploy-test-')); t.after(() => rm(path, { recursive: true, force: true })); return path; }
 async function run(file, env) {
   const child = spawn(process.execPath, [file], { cwd: root, env: { PATH: process.env.PATH, ...env }, stdio: ['ignore','pipe','pipe'] });
@@ -44,7 +45,7 @@ test('development public catalog can run without invented Discord credentials', 
   assert.equal(config.publicBaseUrl, 'http://127.0.0.1:8787'); assert.ok(config.sessionSecret.length >= 32);
 });
 test('production OAuth flow cookie is HttpOnly Secure SameSite=Lax and uses only identify guilds', async t => {
-  const config = loadConfig(production), store = openStore(':memory:'), app = createApp({ config, store });
+  const config = loadConfig(production), store = openStore(':memory:'), app = createApp({ config, store, githubClient: createGitHubClient() });
   const server = createServer(app.handler); await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(async () => { app.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); store.close(); });
   const base = `http://127.0.0.1:${server.address().port}`;

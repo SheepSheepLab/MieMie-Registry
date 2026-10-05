@@ -2,7 +2,7 @@
 
 本目录服务属于咩咩（MieMie）开源软件与社区生态，由生态 Founder / 创始人 SheepSheep 发起和创建。SheepSheepLab 是官方 GitHub 开发、维护与发布命名空间，官方项目主要通过该命名空间维护和发布，并欢迎社区贡献者共同参与。
 
-MieMie Extension Ecosystem MVP 的独立目录与 Discord 投稿服务，当前发布目标 **0.6.0**（发布流程进行中，尚未部署）。软件代码 Copyright © 2026 SheepSheep，采用 [GNU GPL v3.0 or later](LICENSE)，SPDX：`GPL-3.0-or-later`。
+MieMie Extension Ecosystem MVP 的独立目录与 Discord 投稿服务，当前版本 **0.6.1**（服务端 GitHub 认证容量修复；204 项自动测试及真实 App / 社区仓库 Gate 已通过。Release 与生产部署分别验收）。软件代码 Copyright © 2026 SheepSheep，采用 [GNU GPL v3.0 or later](LICENSE)，SPDX：`GPL-3.0-or-later`。
 
 社区贡献者（Community Contributors）保留各自的贡献者身份；除另有说明，贡献内容的版权归相应贡献者所有。
 
@@ -14,16 +14,20 @@ Registry 只持久保存目录元数据、Discord 投稿身份和必要管理记
 
 Discord 来源仅原帖所在服务器成员可见；GitHub 项目仍可选择公开或 Guild-only，可选 Discord 发布帖与可见范围依据分别保存。受限投稿要求投稿者属于该 Guild；成员验证不代表作者认证。权限使用 Guild ID，不使用服务器名称。
 
+## 0.6.1 发布说明
+
+统一服务端 GitHub App 认证、有界请求与在途去重，Token 不跨 API 域名；保留原有包校验、超时及 schema 5。配置、安全边界、真实社区 Gate 与部署前提见 [认证与部署说明](docs/GITHUB-AUTH-0.6.1.md)，发行变更见 [0.6.1 发布说明](docs/RELEASE-0.6.1.md)。生产切换前必须完成真实服务账号、独立生产私钥和上游认证 preflight。
+
 ## 0.6.0 发布说明
 
 schema 5 投稿模型、Discord Guild-only、服务端分发方式推导和兼容 Catalog DTO。升级必须先备份并验证迁移副本，详见 [0.6.0 发布说明](docs/RELEASE-0.6.0.md)。
 
-## 0.5.0 候选版本说明
+## 0.5.0 历史说明
 
 - GitHub 与 Discord 项目链接分别展示和保存；可在投稿前核对可见范围所属服务器。
 - 改善拒绝授权和登录失败的结束反馈；加强安装包实际内容与分发组合校验。
 - 沿用现有角色和官方/社区权限，公开 DTO 新增项目链接。包含既有 SQLite v3 → v4 迁移，升级前需备份；不应直接让旧程序打开新 schema。
-- GitHub 当前最新公开 Registry 条目为 0.3.2 Pre-release；0.4.0 功能基线是仓库提交 `13c09fa`，未找到公开 0.4.0 Release。本轮 0.5.0 仅为本地候选。真实生产 OAuth 与部署未验收。
+- 历史说明：0.5.0 开发时基于仓库中的 0.4.0 功能基线 `13c09fa`；当前发行版本与部署要求以上文及对应 Release 说明为准。
 
 ## 本地运行
 
@@ -75,6 +79,6 @@ Catalog 下架／隐藏不远程删除用户已安装的代码。已安装用户
 
 ### Catalog 版本缓存
 
-已主动投稿且当前访问者可见的 GitHub 项目，在读取目录/详情时刷新作者 Release 发现信息。每仓库缓存 15 分钟，每次请求最多开始 4 个刷新，整个进程每小时最多开始 8 次目录自动刷新以保留匿名 GitHub 配额，最多等待 3 秒；慢请求可在后台完成，下次读取显示结果。GitHub 不可用或新 Release 不能验证时保留最近合法记录，不把网络失败视为无更新。安装仍须由 Hub 重新锁定 Release 并校验包。
+已主动投稿且当前访问者可见的 GitHub 项目，在读取目录/详情时刷新作者 Release 发现信息。每仓库缓存 15 分钟，每次请求最多开始 4 个刷新，整个进程每小时最多开始 8 次目录自动刷新以控制 GitHub 上游调用预算（认证后仍保留该上限），最多等待 3 秒；慢请求可在后台完成，下次读取显示结果。GitHub 不可用或新 Release 不能验证时保留最近合法记录，不把网络失败视为无更新。安装仍须由 Hub 重新锁定 Release 并校验包。
 
 刷新只修改发现信息，不修改投稿者、展示文案、可见范围或上下架状态，不新增投稿；并发更换仓库后，旧请求不能覆盖新来源。

@@ -1,4 +1,4 @@
-import {REGISTRY_VERSION} from './version.js';
+import {createGitHubClient} from './github-client.js';
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) 2026 SheepSheep
 import { createHash } from 'node:crypto';
@@ -15,11 +15,6 @@ const keys = (value, names) => plain(value) && Object.keys(value).length === nam
 const decode = bytes => { try { return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)); } catch { fail(502, 'invalid_package_json', '作者 GitHub 文件不是有效 JSON'); } };
 const failure = () => fail(502, 'invalid_package', '作者 GitHub 安装包身份、结构或校验信息无效');
 
-function officialURL(value) {
-  let url; try { url = new URL(value); } catch { fail(502, 'unsafe_redirect', 'GitHub 下载重定向无效'); }
-  if (url.protocol !== 'https:' || url.port || url.username || url.password || !['api.github.com', 'github.com', 'release-assets.githubusercontent.com', 'objects.githubusercontent.com'].includes(url.hostname)) fail(502, 'unsafe_redirect', 'GitHub 下载重定向来源不允许');
-  return url.href;
-}
 function asset(release, name, base, max) {
   const matches = release.assets.filter(value => value?.name === name);
   if (matches.length !== 1) failure();
@@ -56,10 +51,9 @@ const assetLock = value => JSON.stringify([value.id, value.name, value.size, val
 
 // A bounded byte transport, never an arbitrary-URL proxy. No downloaded code is
 // executed or stored. Hub independently repeats every package check on receipt.
-function createReleaseRelay({ hub = false, fetchImpl = fetch, queryTimeoutMs = 15000, assetTimeoutMs = 60000, operationTimeoutMs = 90000, now = Date.now, metadataCacheTtlMs = 120000 } = {}) {
-  const headers = { Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'MieMie-Registry/' + REGISTRY_VERSION };
-  const repositoryCache = new Map(), metadataCache = new Map(); let rateReset = 0;
-  function limited() {return Object.assign(new Error('GitHub 匿名 API 额度暂时用完，请在配额恢复后重试'), {status: 429, code: 'github_rate_limited', retryAt: new Date(rateReset).toISOString()});}
+function createReleaseRelay({ hub = false, fetchImpl = fetch, githubClient, queryTimeoutMs = 15000, assetTimeoutMs = 60000, operationTimeoutMs = 90000, now = Date.now, metadataCacheTtlMs = 120000 } = {}) {
+  const client = githubClient || createGitHubClient({fetchImpl, now});
+  const repositoryCache = new Map(), metadataCache = new Map();
   function cacheGet(cache, key) {const item = cache.get(key); if (item && item.until > now()) return item.value; cache.delete(key); return undefined;}
   function cachePut(cache, key, value) {
     if (metadataCacheTtlMs <= 0) return;
@@ -76,7 +70,6 @@ function createReleaseRelay({ hub = false, fetchImpl = fetch, queryTimeoutMs = 1
     if (!keys(input, ['repository', 'releaseId', 'assetId']) || !positive(input.releaseId) || !positive(input.assetId)) fail(400, 'invalid_relay_request', '仅接受 repository、releaseId 和 assetId');
     const repository = githubRepo(input.repository);
     if (repository.url !== input.repository) fail(400, 'invalid_relay_request', '需要规范化的作者 GitHub 仓库地址');
-    if (rateReset > now()) throw limited();
     const controller = new AbortController();
     let rejectAbort;
     const cancelled = new Promise((_, reject) => { rejectAbort = reject; });
@@ -84,53 +77,21 @@ function createReleaseRelay({ hub = false, fetchImpl = fetch, queryTimeoutMs = 1
     const disconnect = () => stop(499, 'client_disconnected', '下载请求已取消');
     signal?.addEventListener('abort', disconnect, { once: true });
     const timer = setTimeout(() => stop(504, 'upstream_timeout', 'GitHub 文件传输总时限已到'), operationTimeoutMs); timer.unref?.();
-    async function download(url, { limit = 1048576, timeout = queryTimeoutMs, binary = false } = {}) {
-      let requestTimer;
-      const requestController = new AbortController(), abort = () => requestController.abort(controller.signal.reason);
-      controller.signal.addEventListener('abort', abort, { once: true });
-      if (controller.signal.aborted) abort();
-      const operation = (async () => {
-        let current = officialURL(url), response;
-        for (let redirects = 0; ; redirects++) {
-          requestController.signal.throwIfAborted();
-          response = await fetchImpl(current, { method: 'GET', headers: { ...headers, ...(binary ? { Accept: 'application/octet-stream' } : {}) }, credentials: 'omit', redirect: 'manual', signal: requestController.signal });
-          if (![301, 302, 303, 307, 308].includes(response.status)) break;
-          if (!binary || redirects >= 5 || !response.headers.get('location')) fail(502, 'unsafe_redirect', 'GitHub API 或下载重定向无效');
-          const next = officialURL(new URL(response.headers.get('location'), current).href);
-          await response.body?.cancel(); current = next;
-        }
-        if (response.url && officialURL(response.url) !== current) fail(502, 'unsafe_redirect', '下载响应地址与已验证路径不一致');
-        if (response.status === 429 || (response.status === 403 && response.headers.get('x-ratelimit-remaining') === '0')) {
-          const reset = Number(response.headers.get('x-ratelimit-reset')) * 1000;
-          const retry = Number(response.headers.get('retry-after')) * 1000;
-          rateReset = Math.min(now() + 86400000, Math.max(now() + 1000, Number.isFinite(reset) && reset > now() ? reset : now() + (retry > 0 ? retry : 60000)));
-          await response.body?.cancel(); throw limited();
-        }
-        if (!response.ok) fail(502, 'github_unavailable', '作者 GitHub 暂时不可读取（HTTP ' + response.status + '）');
-        if (Number(response.headers.get('content-length')) > limit) fail(502, 'response_too_large', '作者 GitHub 文件超过大小限制');
-        if (!response.body?.getReader) fail(502, 'invalid_response', '作者 GitHub 文件不可读取');
-        const reader = response.body.getReader(), chunks = []; let length = 0;
-        try {
-          for (;;) { requestController.signal.throwIfAborted(); const { value, done } = await reader.read(); if (done) break; length += value.length; if (length > limit) fail(502, 'response_too_large', '作者 GitHub 文件超过大小限制'); chunks.push(value); }
-        } finally { reader.releaseLock(); }
-        return Buffer.concat(chunks);
-      })();
-      const timeoutPromise = new Promise((_, reject) => { requestTimer = setTimeout(() => { requestController.abort(); reject(Object.assign(new Error('作者 GitHub 请求超时'), { status: 504, code: 'upstream_timeout' })); }, timeout); requestTimer.unref?.(); });
-      try { return await Promise.race([operation, timeoutPromise, cancelled]); }
-      finally { clearTimeout(requestTimer); requestController.abort(); controller.signal.removeEventListener('abort', abort); }
+    async function download(url, { limit = 1048576, timeout = queryTimeoutMs, binary = false, shareKey } = {}) {
+      return (await client.read(url, {limit, timeout, binary, shareKey, signal: controller.signal})).bytes;
     }
     try {
       if (signal?.aborted) disconnect();
       const operation = (async () => {
         const base = `https://api.github.com/repos/${repository.owner}/${repository.repo}`;
-        const repo = cacheGet(repositoryCache, base) || decode(await download(base));
+        const repo = cacheGet(repositoryCache, base) || decode(await download(base, {shareKey: 'repository'}));
         if (!plain(repo) || repo.private !== false || repo.full_name !== `${repository.owner}/${repository.repo}`) fail(400, 'invalid_repository', '仓库必须公开且使用 GitHub 返回的规范名称');
         cachePut(repositoryCache, base, {private: false, full_name: repo.full_name});
         const releaseURL = `${base}/releases/${input.releaseId}`;
-        const release = validateRelease(decode(await download(releaseURL)), input.releaseId);
+        const release = validateRelease(decode(await download(releaseURL, {shareKey: 'release'})), input.releaseId);
         const metadataAsset = asset(release, metadataName, base, 65536);
         const cacheKey = JSON.stringify([base, release.id, assetLock(metadataAsset)]);
-        const metadataBytes = cacheGet(metadataCache, cacheKey)?.slice() || await download(metadataAsset.url, { limit: 65536, binary: true });
+        const metadataBytes = cacheGet(metadataCache, cacheKey)?.slice() || await download(metadataAsset.url, { limit: 65536, binary: true, shareKey: cacheKey });
         verifyBytes(metadataBytes, metadataAsset);
         const metadata = hub ? validateHubMetadata(decode(metadataBytes), release) : validateMetadata(decode(metadataBytes), repository, release);
         const packageAsset = asset(release, metadata.asset.name, base, 16777216);

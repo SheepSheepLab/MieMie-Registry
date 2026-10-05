@@ -29,5 +29,10 @@ export function loadConfig(env = process.env) {
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('PORT 无效');
   const databasePath = env.DATABASE_PATH || './data/registry.sqlite';
   if (production && databasePath === ':memory:') throw new Error('生产环境必须使用持久 SQLite 文件');
-  return { production, publicBaseUrl, allowedOrigins, sessionSecret, redirectUri, adminIds, ownerId, sessionTtlMs: ttl * 1000, clientId, clientSecret, databasePath, host: env.HOST || '127.0.0.1', port };
+  const mode = env.GITHUB_AUTH_MODE || (production ? 'app' : 'anonymous');
+  if (!['app', 'anonymous'].includes(mode)) throw new Error('GITHUB_AUTH_MODE 必须为 app 或 anonymous');
+  if (production && mode !== 'app') throw new Error('生产环境必须使用 GitHub App 认证');
+  const githubAuth = {mode, appId: env.GITHUB_APP_ID, installationId: env.GITHUB_APP_INSTALLATION_ID, privateKeyPath: env.GITHUB_APP_PRIVATE_KEY_PATH};
+  if (mode === 'app' && (!/^[1-9]\d{0,19}$/.test(githubAuth.appId || '') || !/^[1-9]\d{0,19}$/.test(githubAuth.installationId || '') || !githubAuth.privateKeyPath)) throw new Error('GitHub App 配置不完整');
+  return { githubAuth, production, publicBaseUrl, allowedOrigins, sessionSecret, redirectUri, adminIds, ownerId, sessionTtlMs: ttl * 1000, clientId, clientSecret, databasePath, host: env.HOST || '127.0.0.1', port };
 }

@@ -1,3 +1,4 @@
+import {createGitHubClient} from './github-client.js';
 import {REGISTRY_VERSION} from './version.js';
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { createHash } from 'node:crypto';
@@ -62,9 +63,9 @@ export function cleanManifest(value, repository, expectedVersion, ref = 'HEAD') 
   }
   return manifest;
 }
-export function createGitHubAdapter({ fetchImpl = fetch } = {}) {
-  const apiHeaders = { Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'MieMie-Registry/' + REGISTRY_VERSION };
-  async function json(url, limit = 1048576) { return parseJSON((await boundedFetch(fetchImpl, url, { headers: apiHeaders, limit })).bytes); }
+export function createGitHubAdapter({ fetchImpl = fetch, githubClient } = {}) {
+  const client = githubClient || createGitHubClient({fetchImpl});
+  async function json(url, limit = 1048576) { return parseJSON((await client.read(url, {limit, shareKey: 'lookup'})).bytes); }
   async function inspect(repoUrl) {
     let repo = githubRepo(repoUrl), base = `https://api.github.com/repos/${repo.owner}/${repo.repo}`;
     const repository = await json(base);
@@ -89,25 +90,25 @@ export function createGitHubAdapter({ fetchImpl = fetch } = {}) {
       try {
         const asset = metadata[0];
         if (!Number.isSafeInteger(asset.id) || asset.id <= 0 || asset.state !== 'uploaded' || !Number.isInteger(asset.size) || asset.size <= 0 || asset.size > 65536 || !/^sha256:[a-f0-9]{64}$/.test(asset.digest || '') || asset.url !== `${base}/releases/assets/${asset.id}`) throw new Error('metadata asset');
-        const { bytes } = await boundedFetch(fetchImpl, asset.url, { limit: 65536, headers: { ...apiHeaders, Accept: 'application/octet-stream' }, allowAssetRedirect: true });
+        const { bytes } = await client.read(asset.url, {limit: 65536, binary: true, shareKey: JSON.stringify([base, release.id, asset.id, asset.name, asset.size, asset.digest, asset.url, asset.state])});
         if (bytes.length !== asset.size || `sha256:${hash(bytes)}` !== asset.digest) throw new Error('metadata digest');
         const m = parseJSON(bytes), manifest = cleanManifest(m.manifest, repo, result.release.version, release.tag_name);
         const validAsset = plain(m.asset) && typeof m.asset.name === 'string' && /^[A-Za-z0-9_.-]+\.json$/.test(m.asset.name) && m.asset.name !== 'MieMie-Extension-update.json' && Number.isInteger(m.asset.size) && m.asset.size > 0 && m.asset.size <= 16777216 && /^[a-f0-9]{64}$/.test(m.asset.sha256 || '');
         if (m.schemaVersion !== 1 || m.productId !== manifest.id || m.version !== manifest.version || m.tag !== release.tag_name || m.format !== 'tavern-helper-script' || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(m.scriptId || '') || m.scriptId === 'e85cd9a3-6352-4b23-938a-6c94d826b4d3' || !validAsset || !/^[a-f0-9]{64}$/.test(m.contentSha256 || '')) throw new Error('metadata identity');
         const packages = release.assets.filter(a => a.name === m.asset.name);
         if (packages.length !== 1 || packages[0].size !== m.asset.size || packages[0].digest !== `sha256:${m.asset.sha256}` || packages[0].state !== 'uploaded' || !Number.isSafeInteger(packages[0].id) || packages[0].url !== `${base}/releases/assets/${packages[0].id}`) throw new Error('package metadata');
-        const payload=await boundedFetch(fetchImpl,packages[0].url,{limit:16777216,timeout:60000,headers:{...apiHeaders,Accept:'application/octet-stream'},allowAssetRedirect:true});
+        const payload=await client.read(packages[0].url,{limit:16777216,timeout:60000,binary:true});
         if(payload.bytes.length!==m.asset.size||hash(payload.bytes)!==m.asset.sha256)throw Error('package digest');
         verifyPackage(payload.bytes,m);
         result.manifest = manifest; result.compatibility = 'installable'; result.reason = '符合机器安装包规范；不代表安全审核或作者认证';
         return result;
-      } catch { result.reason = 'Release 安装包或元数据无效、或不可读取；可前往作者 GitHub 获取'; }
+      } catch (error) { if (['github_auth_failed', 'github_rate_limited', 'github_forbidden'].includes(error.code)) throw error; result.reason = 'Release 安装包或元数据无效、或不可读取；可前往作者 GitHub 获取'; }
     }
     // Root manifest supplies optional display fields only. It cannot grant installability.
     try {
-      const response = await boundedFetch(fetchImpl, `${base}/contents/manifest.json`, { headers: { ...apiHeaders, Accept: 'application/vnd.github.raw+json' }, limit: 65536 });
+      const response = await client.read(`${base}/contents/manifest.json`, {accept: 'application/vnd.github.raw+json', limit: 65536, shareKey: 'root-manifest'});
       result.manifest = cleanManifest(parseJSON(response.bytes), repo, undefined, release?.tag_name || 'HEAD');
-    } catch { /* ordinary external GitHub projects need no manifest */ }
+    } catch (error) { if (['github_auth_failed', 'github_rate_limited', 'github_forbidden'].includes(error.code)) throw error; /* ordinary external GitHub projects need no manifest */ }
     return result;
   }
   return { inspect };
