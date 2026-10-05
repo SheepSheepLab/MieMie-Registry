@@ -7,6 +7,8 @@ services:
     env_file: .env
     environment:
       NODE_ENV: production
+      GITHUB_AUTH_MODE: app
+      GITHUB_APP_PRIVATE_KEY_PATH: /run/secrets/miemie-github-app.pem
       HOST: 0.0.0.0
       PORT: 8787
       DATABASE_PATH: /data/registry.sqlite
@@ -16,6 +18,12 @@ services:
     volumes:
       - registry-data:/data
       - registry-backups:/backups
+      - type: bind
+        source: ${GITHUB_APP_PRIVATE_KEY_PATH:?Set the external private key path}
+        target: /run/secrets/miemie-github-app.pem
+        read_only: true
+        bind:
+          create_host_path: false
     read_only: true
     tmpfs:
       - /tmp:mode=1777,size=16m

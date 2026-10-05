@@ -1,3 +1,5 @@
+import {createGitHubClient} from '../src/github-client.js';
+import {setTimeout as delay} from 'node:timers/promises';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
@@ -106,4 +108,12 @@ test('upstream quota is a structured 429 with retry time; cooldown prevents hamm
 test('HTTP quota response preserves retryAt and Retry-After instead of reporting CORS failure',async t=>{
   const at=new Date(Date.now()+90000).toISOString();const f=await appFixture(t,{githubRelay:{read:async()=>{throw Object.assign(new Error('quota exhausted'),{status:429,code:'github_rate_limited',retryAt:at});}}});
   const r=await f.post();assert.equal(r.status,429);assert.ok(Number(r.headers.get('retry-after'))>60);assert.equal((await r.json()).error.retryAt,at);
+});
+
+test('concurrent same release installs share lookups but independently download, validate and re-read',async()=>{
+  const f=fixture();const client=createGitHubClient({fetchImpl:async(url,options)=>{await delay(1);return f.fetchImpl(url,options);}});
+  const relay=createGitHubRelay({githubClient:client});const values=await Promise.all([relay.read(input(31)),relay.read(input(31))]);
+  for(const value of values)assert.deepEqual(value,f.packageBytes);
+  const count=suffix=>f.calls.filter(c=>c.url===BASE+suffix).length;
+  assert.equal(count(''),1);assert.equal(count('/releases/20'),3);assert.equal(count('/releases/assets/30'),1);assert.equal(count('/releases/assets/31'),2);client.close();
 });

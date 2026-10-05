@@ -1,15 +1,18 @@
 # 本地与部署准备
 
-Registry 0.3.0 可以独立运行，无需 Hub／Polisher 源码目录；没有云厂商绑定，也不要求立即购买服务器。
+Registry 可以独立运行，无需 Hub／Polisher 源码目录；没有云厂商绑定，也不要求立即购买服务器。
 
 ## 一条命令启动
 
-安装 Node.js 24+，首次执行 `npm ci`，以后在项目目录运行 `npm start`。开发模式无真实 Discord 配置时服务可以正常启动，但不能登录投稿；生产模式缺少真实 HTTPS 地址、明确 CORS Origin、Discord Client ID／Secret 或 Session Secret 时直接拒绝启动。不提供生产 Mock 登录。
+安装 Node.js 24+，首次执行 `npm ci`，以后在项目目录运行 `npm start`。开发模式无真实 Discord 配置时服务可以正常启动，但不能登录投稿；0.6.1 的真实社区 GitHub Gate 和生产部署硬规则见 [GitHub 认证说明](GITHUB-AUTH-0.6.1.md)。生产模式缺少 GitHub App ID / Installation ID / 外置可读有效私钥，或缺少真实 HTTPS 地址、明确 CORS Origin、Discord Client ID／Secret 或 Session Secret 时直接拒绝启动。不提供生产 Mock 登录。
 
 `.env.example` 只含空值／本机示例，复制到 `.env` 后按下表配置。实际 `.env` 永远不提交 Git。
 
 | 环境变量 | 用途 |
 |---|---|
+| GITHUB_AUTH_MODE | 生产必须 app；开发/测试可 anonymous |
+| GITHUB_APP_ID / GITHUB_APP_INSTALLATION_ID | 专用只读 App 及安装 ID；服务端配置 |
+| GITHUB_APP_PRIVATE_KEY_PATH | Release / 仓库外的 RSA PEM 绝对路径；不可进入构建或 DB 备份 |
 | NODE_ENV | 本地 development；部署 production |
 | HOST / PORT | 默认 127.0.0.1 / 8787，按反向代理部署调整 |
 | PUBLIC_BASE_URL | Registry 的精确 HTTPS Origin，本机开发可 HTTP |
@@ -30,7 +33,7 @@ Registry 0.3.0 可以独立运行，无需 Hub／Polisher 源码目录；没有�
 
 仓库提供 Node 24 的 `Dockerfile` 和 `compose.yaml`。镜像只复制显式列出的源码／许可证；`.dockerignore` 使用 allowlist，不发送 `.env`、数据库、备份、测试产物或私有管理员配置到镜像构建上下文。运行用户为 `node`（UID/GID 1000），根文件系统只读；仅 `/data`、`/backups` 持久卷及有界 `/tmp` 可写。没有运行时 npm 第三方依赖。
 
-在服务器配置私有 `.env`，填入真实 HTTPS `PUBLIC_BASE_URL`、明确 `CORS_ORIGINS`、真实 Discord 应用配置、随机 `SESSION_SECRET`；管理员 ID 如需管理功能才填写。然后由运维执行：
+在服务器配置私有 `.env`，填入真实 HTTPS `PUBLIC_BASE_URL`、明确 `CORS_ORIGINS`、真实 Discord 应用配置、随机 `SESSION_SECRET`；管理员 ID 如需管理功能才填写。同时配置只读 GitHub App ID、Installation ID 和宿主机外置私钥绝对路径；Compose 将该文件只读挂载至容器 `/run/secrets/miemie-github-app.pem`，不存在时拒绝创建空目录代替。检查容器真实运行用户可读取且无 other 权限、无 group write；不把密钥 COPY 到镜像。完成真实社区 Gate 并获得部署授权后，才由运维执行：
 
 ```sh
 docker compose up -d --build

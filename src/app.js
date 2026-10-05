@@ -1,3 +1,5 @@
+import {createGitHubAuth} from './github-auth.js';
+import {createGitHubClient} from './github-client.js';
 import {REGISTRY_VERSION} from './version.js';
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) 2026 SheepSheep
@@ -19,7 +21,11 @@ async function readJSON(req) {
   for await (const chunk of req) { length += chunk.length; if (length > 16384) fail(413, 'body_too_large', '请求超过 16 KiB'); chunks.push(chunk); }
   try { const value = JSON.parse(Buffer.concat(chunks).toString('utf8')); if (!plain(value)) throw new Error(); return value; } catch { fail(400, 'invalid_json', 'JSON 无效'); }
 }
-export function createApp({ config, store, discord = createDiscordAdapter(config), github = createGitHubAdapter(), githubRelay = createGitHubRelay(), hubRelay = createHubReleaseRelay(), now = Date.now, rateLimit = 120, catalogRefreshTtlMs = 900000, catalogRefreshWaitMs = 3000, catalogRefreshBudget = 8 } = {}) {
+export function createApp({ config, store, discord = createDiscordAdapter(config), github, githubRelay, hubRelay, githubClient, now = Date.now, rateLimit = 120, catalogRefreshTtlMs = 900000, catalogRefreshWaitMs = 3000, catalogRefreshBudget = 8 } = {}) {
+  githubClient ||= createGitHubClient({auth: createGitHubAuth(config.githubAuth), now});
+  github ||= createGitHubAdapter({githubClient});
+  githubRelay ||= createGitHubRelay({githubClient, now});
+  hubRelay ||= createHubReleaseRelay({githubClient, now});
   store.bootstrapAdmins(config.adminIds || [],now());
   const flows = new Map(), bridges = new Map(), handoffs = new Map(), rates = new Map(), previewCache = new Map();
   const relayRequests = new Map();
@@ -125,7 +131,7 @@ export function createApp({ config, store, discord = createDiscordAdapter(config
       if (method === 'OPTIONS') { res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, OPTIONS'); res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type'); res.setHeader('Access-Control-Max-Age', '600'); res.writeHead(204); res.end(); return; }
       if (!['GET', 'POST', 'PATCH'].includes(method)) fail(405, 'method_not_allowed', '不支持此请求');
       if (method !== 'GET' && (!origin || !config.allowedOrigins.has(origin))) fail(403, 'origin_required', '写入请求必须来自已配置页面');
-      if (path === '/health' && method === 'GET') {if(store.db.prepare('PRAGMA user_version').get().user_version!==5)throw Error('schema');store.db.prepare('SELECT id FROM submissions LIMIT 1').get();return send(res, 200, { status: 'ok', version: REGISTRY_VERSION });}
+      if (path === '/health' && method === 'GET') {if(store.db.prepare('PRAGMA user_version').get().user_version!==5)throw Error('schema');store.db.prepare('SELECT id FROM submissions LIMIT 1').get();return send(res, 200, { status: 'ok', version: REGISTRY_VERSION, githubUpstream: githubClient.status().state });}
       if(path==='/admin'&&method==='GET') {
         res.setHeader('Content-Security-Policy',"default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'");
         res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'});res.end(adminPage);return;
@@ -300,6 +306,7 @@ export function createApp({ config, store, discord = createDiscordAdapter(config
       }
       if(path.startsWith('/api/admin/')) {
         const auth=authenticate(req,true);
+        if (path === '/api/admin/github-upstream' && method === 'GET') {canSubmit(auth.user); return send(res, 200, githubClient.status());}
         // Read body first, then re-read roles/ban to prevent revocation races.
         const body=method==='GET'?null:await readJSON(req);
         return send(res,200,handleGovernance({path,method,body,auth:authenticate(req,true),store,config,now,query:requestUrl.searchParams}));
@@ -315,5 +322,5 @@ export function createApp({ config, store, discord = createDiscordAdapter(config
       send(res, status, { error: { code: error.code || 'internal_error', message: status === 500 ? '服务暂时不可用' : error.message, ...(error.code === 'github_rate_limited' ? {retryAt: error.retryAt} : {}) } });
     }
   };
-  return { handler, close() { for (const controller of relayRequests.keys()) controller.abort(); relayRequests.clear(); sessionCredentials.clear(); flows.clear(); bridges.clear(); handoffs.clear(); rates.clear(); previewCache.clear(); }, store };
+  return { handler, close() { githubClient.close(); for (const controller of relayRequests.keys()) controller.abort(); relayRequests.clear(); sessionCredentials.clear(); flows.clear(); bridges.clear(); handoffs.clear(); rates.clear(); previewCache.clear(); }, store };
 }
