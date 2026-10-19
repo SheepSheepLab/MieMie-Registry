@@ -2,9 +2,8 @@ import {createGitHubClient} from './github-client.js';
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) 2026 SheepSheep
 import { createHash } from 'node:crypto';
-import { fail, plain, githubRepo, version } from './validation.js';
-import { cleanManifest } from './remote.js';
-import {verifyPackage} from './package-validation.js';
+import { fail, plain, githubRepo } from './validation.js';
+import {verifyPackage, validateExtensionPackageMetadata, validatePackageRelease, validatePackageAsset} from './package-validation.js';
 
 const METADATA = 'MieMie-Extension-update.json';
 const HUB_ID = 'e85cd9a3-6352-4b23-938a-6c94d826b4d3';
@@ -15,25 +14,6 @@ const keys = (value, names) => plain(value) && Object.keys(value).length === nam
 const decode = bytes => { try { return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)); } catch { fail(502, 'invalid_package_json', '作者 GitHub 文件不是有效 JSON'); } };
 const failure = () => fail(502, 'invalid_package', '作者 GitHub 安装包身份、结构或校验信息无效');
 
-function asset(release, name, base, max) {
-  const matches = release.assets.filter(value => value?.name === name);
-  if (matches.length !== 1) failure();
-  const value = matches[0];
-  if (!positive(value.id) || value.state !== 'uploaded' || !positive(value.size) || value.size > max || !/^sha256:[a-f0-9]{64}$/.test(value.digest || '') || value.digest.length !== 71 || value.url !== `${base}/releases/assets/${value.id}`) failure();
-  return value;
-}
-function validateRelease(value, id) {
-  if (!plain(value) || value.id !== id || value.draft !== false || typeof value.tag_name !== 'string' || !value.tag_name.startsWith('v') || !version(value.tag_name.slice(1)) || !Array.isArray(value.assets) || value.assets.length > 1000) failure();
-  const ids = value.assets.map(a => a?.id);
-  if (new Set(ids).size !== ids.length) failure();
-  return value;
-}
-function validateMetadata(value, repository, release) {
-  if (!keys(value, ['schemaVersion', 'format', 'productId', 'version', 'tag', 'scriptId', 'manifest', 'asset', 'contentSha256']) || value.schemaVersion !== 1 || value.format !== 'tavern-helper-script' || value.tag !== release.tag_name || value.version !== release.tag_name.slice(1) || typeof value.scriptId !== 'string' || !value.scriptId.trim() || value.scriptId.length > 200 || value.scriptId === HUB_ID || !hash(value.contentSha256) || !keys(value.asset, ['name', 'size', 'sha256']) || typeof value.asset.name !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,159}\.json$/.test(value.asset.name) || value.asset.name.endsWith('\n') || value.asset.name === METADATA || !positive(value.asset.size) || value.asset.size > 16777216 || !hash(value.asset.sha256)) failure();
-  const manifest = cleanManifest(value.manifest, repository, value.version, value.tag);
-  if (manifest.id !== value.productId || (value.manifest.contributes !== undefined && !plain(value.manifest.contributes))) failure();
-  return value;
-}
 function validateHubMetadata(value, release) {
   if (!keys(value, ['schemaVersion', 'format', 'productId', 'version', 'tag', 'scriptId', 'asset', 'contentSha256']) ||
       value.schemaVersion !== 1 || value.format !== 'tavern-helper-script' || value.productId !== 'miemie.hub' ||
@@ -88,13 +68,13 @@ function createReleaseRelay({ hub = false, fetchImpl = fetch, githubClient, quer
         if (!plain(repo) || repo.private !== false || repo.full_name !== `${repository.owner}/${repository.repo}`) fail(400, 'invalid_repository', '仓库必须公开且使用 GitHub 返回的规范名称');
         cachePut(repositoryCache, base, {private: false, full_name: repo.full_name});
         const releaseURL = `${base}/releases/${input.releaseId}`;
-        const release = validateRelease(decode(await download(releaseURL, {shareKey: 'release'})), input.releaseId);
-        const metadataAsset = asset(release, metadataName, base, 65536);
+        const release = validatePackageRelease(decode(await download(releaseURL, {shareKey: 'release'})), input.releaseId);
+        const metadataAsset = validatePackageAsset(release, metadataName, base, 65536);
         const cacheKey = JSON.stringify([base, release.id, assetLock(metadataAsset)]);
         const metadataBytes = cacheGet(metadataCache, cacheKey)?.slice() || await download(metadataAsset.url, { limit: 65536, binary: true, shareKey: cacheKey });
         verifyBytes(metadataBytes, metadataAsset);
-        const metadata = hub ? validateHubMetadata(decode(metadataBytes), release) : validateMetadata(decode(metadataBytes), repository, release);
-        const packageAsset = asset(release, metadata.asset.name, base, 16777216);
+        const metadata = hub ? validateHubMetadata(decode(metadataBytes), release) : validateExtensionPackageMetadata(decode(metadataBytes), repository, release);
+        const packageAsset = validatePackageAsset(release, metadata.asset.name, base, 16777216);
         if (packageAsset.size !== metadata.asset.size || packageAsset.digest !== `sha256:${metadata.asset.sha256}`) failure();
         if (![metadataAsset.id, packageAsset.id].includes(input.assetId)) fail(400, 'asset_not_allowed', '只能传输已验证 Manifest 指定的安装包或机器元数据');
         let bytes = metadataBytes;
@@ -104,8 +84,8 @@ function createReleaseRelay({ hub = false, fetchImpl = fetch, githubClient, quer
         }
         // Re-read authoritative metadata after transfer, catching replaced assets,
         // changed tags, draft transitions and package-name/ID rebinding.
-        const fresh = validateRelease(decode(await download(releaseURL)), input.releaseId);
-        if (fresh.tag_name !== release.tag_name || assetLock(asset(fresh, metadataName, base, 65536)) !== assetLock(metadataAsset) || assetLock(asset(fresh, metadata.asset.name, base, 16777216)) !== assetLock(packageAsset)) fail(409, 'release_changed', '作者 GitHub Release 在传输期间变化，请重新预览');
+        const fresh = validatePackageRelease(decode(await download(releaseURL)), input.releaseId);
+        if (fresh.tag_name !== release.tag_name || assetLock(validatePackageAsset(fresh, metadataName, base, 65536)) !== assetLock(metadataAsset) || assetLock(validatePackageAsset(fresh, metadata.asset.name, base, 16777216)) !== assetLock(packageAsset)) fail(409, 'release_changed', '作者 GitHub Release 在传输期间变化，请重新预览');
         cachePut(metadataCache, cacheKey, Buffer.from(metadataBytes));
         return bytes;
       })();
