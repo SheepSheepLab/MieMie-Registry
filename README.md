@@ -85,3 +85,9 @@ Catalog 下架／隐藏不远程删除用户已安装的代码。已安装用户
 
 
 > 隐私历史迁移说明：文中涉及的提交标识已对应至迁移后历史；历史测试时间、结论及贡献归属保持原意，不表示重新执行了当时的验收。原始记录由维护者受保护保存。
+
+## Hub 0.9.0 API2 开发候选（未部署）
+
+本分支新增 Extension Manifest API2 验证；Registry HTTP API 仍为 v1，DB schema 仍为 5，Manifest／Package／Machine Metadata／Build Identity Schema 仍为 1。`src/package-validation.js` 为 Catalog（`remote.js`）与 Package Relay（`github-relay.js`）共享校验入口，完整字段与边界见 [API](docs/API.md#extension-api2-候选合同2026-10-20)。
+
+已发布 0.6.1、其 Release 记录与部署历史不被本候选改写；本分支 package version 暂留 0.6.1，不可替换同版正式资产。2026-10-20 Pre-Main 的 314 项主测试、Linux CI 与隔离 Origin 结果见 [Security](docs/SECURITY.md#api2-候选验证2026-10-20)。**生产 Registry API2** 与 **生产 Origin／OAuth** 是两个独立 Pending Gate；本地合同通过不表示生产已升级。

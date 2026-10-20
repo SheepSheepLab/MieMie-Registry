@@ -111,3 +111,15 @@ Hub「我的 → 使用 Discord 登录 → 提交扩展 → GitHub」填写 Poli
 该测试执行真实浏览器 popup、HttpOnly Cookie、CORS、postMessage、一次性会话交接和目录权限请求，使用内存测试库和本地 Mock Discord，绝不连接真实 Discord 或读取私有 `.env`。它不能代替真实 Discord Developer Portal 回调和授权验收。
 
 治理升级、Owner 初始化和保留策略见 [GOVERNANCE.md](GOVERNANCE.md)。反向代理需转发 `/admin`、`/admin.js` 到同一 localhost 服务，不公开任何文件目录。
+
+## API2 候选未来部署前置条件（未授权执行）
+
+当前分支尚未部署，产品新版版本由 Owner 决定。HTTP API v1、DB5 和现有精确 Origin／OAuth 安全边界保持；API2 支持与实际允许来源／真实登录必须分别验收。下方要求用于未来明确获准的生产升级，不构成本轮部署授权。
+
+1. 真实读取 `miemie-registry.service` 的 User、Group、WorkingDirectory、ExecStart，不凭历史记录硬编码服务账号；检查新 Release 和全部父路径的 owner/group/mode。
+2. 以 systemd 实际运行账号做 Service-User Preflight：能 traverse Release、进入工作目录、读取 package.json、src/server.js 及全部运行文件，并核对所需外部密钥／配置的最小读取权限。任一失败禁止切 current、迁移 DB 或启动新版；遵循上一正常 Release 的安全权限，禁止 chmod 777 绕过。
+3. 在切换前验证一致性备份可恢复、当时副本数据库完整性及真实 schema；如有迁移先完成副本 dry run。API2 本身不增加 DB migration，不因此跳过备份与恢复 Gate。
+4. backup／health timer 调用 `/opt/miemie-registry/current` 对应版本的正式工具，不在独立脚本硬编码 version/schema。升级后实际执行一次 backup service 与 health service，并核对 timer active、最近任务成功和下一次触发。
+5. 分别验证真实 API2 Catalog／Relay 和已批准 Origin／OAuth；失败按批准的代码／配置／数据库快照恢复方案处理。不得扩大 allowlist 或关闭 CORS 取得通过。
+
+本文既有 Docker／旧版部署记录保留各自范围；旧报告的具体版本或账号不是未来部署的权威输入。
