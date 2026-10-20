@@ -1,5 +1,7 @@
 # Governance v1 / Registry 0.4.0
 
+> 版本与运维导航：本文原治理／验收／Relay 阶段记录及具体版本保持原意；未来部署必须按 [DEPLOYMENT](DEPLOYMENT.md#api2-候选未来部署前置条件未授权执行) 读取真实 service，并让 backup／health 调用 current 对应工具，不能直接照搬历史硬编码版本命令。
+
 角色可以叠加；每个请求从服务端重新判断，客户端角色显示不是授权。
 
 | 能力 | Submitter | Legacy Official Publisher | Admin | Owner |

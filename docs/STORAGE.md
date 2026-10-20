@@ -39,3 +39,7 @@ ID、owner/submitter、主 source_url、内容、分类、保护、Hold、下架
 2026-09-29 经现有 Workbench 只读查询确认：生产 schema 4，仅 1 条 github/public，Discord 记录为 0。未做生产迁移。测试构造包含公共/受限/官方/隐藏/保留记录的 v4 数据，验证允许差异、事务回滚、完整性、幂等和旧客户端 DTO。
 
 `tools/migrate-verified.mjs` 当前从 v2 / v3 / v4 一致性备份生成隔离 v5 候选；逐列核对，唯一允许的旧列变化为冗余链接删除、Discord ACL 与上述 distribution 规范化，另核对发布帖迁移。在线源库不替换。将来部署必须重新确认备份和只读来源统计，按 DEPLOYMENT.md 执行复制库演练、完整性和恢复验证；回退旧程序需恢复对应旧 schema 快照，不能让已发布 0.5.0 直接打开 v5。未授权前不要在生产运行新 openStore 或迁移工具。
+
+## API2 候选的存储边界（2026-10-20）
+
+当前开发源码 `src/store.js` 的 DB schema 为 5。Extension API2 的验证变更不修改 DB schema，不引入新迁移；HTTP API v1 与各机器 Schema1 也分别保持。下文／上文原生产快照、schema3／4→5 迁移及当时版本记录仍是历史，不据此推断此刻生产数据库状态。本轮未读取或迁移生产数据库。未来部署仍须先对当时真实生产副本完成备份完整性、迁移需求核对及恢复演练，不能仅切换旧代码冒充数据库回滚。

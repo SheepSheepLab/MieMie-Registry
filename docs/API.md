@@ -179,3 +179,15 @@ locked release, exact package bytes, structure and compatibility before writing.
 Changing a release or claiming a product type cannot bypass these checks. Machine
 compatibility is not a safety audit and never assigns Official classification.
 Shortcut Launcher is an opt-in Runtime presentation capability, not a Catalog type.
+
+## Extension API2 候选合同（2026-10-20）
+
+Registry 的 HTTP API v1 路由、认证与响应合同保持原样。这里的 API2 指 Extension Runtime 的 Manifest 声明，不是 HTTP API 版本。
+
+`src/package-validation.js` 的 `cleanManifest` 只接受 `schemaVersion === 1`、`apiVersion` 为安全整数 1 或 2；其他声明拒绝。可选 hubApi 必须是普通对象，min/max 为正的安全整数、min≤max，并包含所声明 apiVersion。Registry 接受某一声明不等于当前 Hub 可执行该 Runtime；Hub 客户端仍须在写入前独立验证目标 API2。
+
+`remote.js` 与 `github-relay.js` 共同使用该校验器：metadata exact keys、Schema1、完整 Manifest、productId、固定 scriptId、Repository、Release ID／Tag、Asset ID／name／size／digest、完整附件 SHA-256、contentSha256、首行五字段 Build Identity 与空 data 均继续验证。Build Identity 不包含 apiVersion，不得用于猜测已安装版本的 Runtime。Catalog 实际下载有界字节并校验包；Relay 在传输后还重新读取权威 Release，拒绝身份变化。Catalog 快照不能替代安装时的最新身份与客户端验证。
+
+Catalog 选择最高有效纯三段 SemVer，忽略 Draft，包含 Pre-release；最多读取五页、每页一百个 Release，超过扫描上限拒绝猜测。Hub 客户端的扫描上限是其独立合同，不能用来改写服务端限制。Metadata 64 KiB、脚本 16 MiB 的边界保持，拒绝任意下载 URL、未知机器字段及 digest 缺失；不通过降低安全检查接受 API2。
+
+HTTP API v1、DB5、OAuth 与精确 Origin 策略未改变。此为未部署候选合同，生产 API2 与生产 Origin／OAuth 分别 Pending；测试性质和证据见 [Security](SECURITY.md#api2-候选验证2026-10-20)。
