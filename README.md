@@ -2,7 +2,7 @@
 
 本目录服务属于咩咩（MieMie）开源软件与社区生态，由生态 Founder / 创始人 SheepSheep 发起和创建。SheepSheepLab 是官方 GitHub 开发、维护与发布命名空间，官方项目主要通过该命名空间维护和发布，并欢迎社区贡献者共同参与。
 
-MieMie Extension Ecosystem MVP 的独立目录与 Discord 投稿服务，当前版本 **0.6.1**（服务端 GitHub 认证容量修复；204 项自动测试及真实 App / 社区仓库 Gate 已通过。Release 与生产部署分别验收）。软件代码 Copyright © 2026 SheepSheep，采用 [GNU GPL v3.0 or later](LICENSE)，SPDX：`GPL-3.0-or-later`。
+MieMie Extension Ecosystem MVP 的独立目录与 Discord 投稿服务，当前源码为 **0.7.0 未发行候选**（Owner 已批准版本号；API2 Manifest 支持，HTTP API v1、DB Schema5 与机器 Schema1 保持。正式 Release 与生产部署分别验收）。软件代码 Copyright © 2026 SheepSheep，采用 [GNU GPL v3.0 or later](LICENSE)，SPDX：`GPL-3.0-or-later`。
 
 社区贡献者（Community Contributors）保留各自的贡献者身份；除另有说明，贡献内容的版权归相应贡献者所有。
 
@@ -90,4 +90,4 @@ Catalog 下架／隐藏不远程删除用户已安装的代码。已安装用户
 
 本分支新增 Extension Manifest API2 验证；Registry HTTP API 仍为 v1，DB schema 仍为 5，Manifest／Package／Machine Metadata／Build Identity Schema 仍为 1。`src/package-validation.js` 为 Catalog（`remote.js`）与 Package Relay（`github-relay.js`）共享校验入口，完整字段与边界见 [API](docs/API.md#extension-api2-候选合同2026-10-20)。
 
-已发布 0.6.1、其 Release 记录与部署历史不被本候选改写；本分支 package version 暂留 0.6.1，不可替换同版正式资产。2026-10-20 Pre-Main 的 314 项主测试、Linux CI 与隔离 Origin 结果见 [Security](docs/SECURITY.md#api2-候选验证2026-10-20)。**生产 Registry API2** 与 **生产 Origin／OAuth** 是两个独立 Pending Gate；本地合同通过不表示生产已升级。
+已发布 0.6.1、其 Release 记录与部署历史不被本候选改写；本分支 package version 已按 Owner 裁定为 0.7.0，尚未创建 Tag／Release 或部署；不得替换 0.6.1 正式资产。当前说明见 [0.7.0 发行草稿](docs/RELEASE-0.7.0-DRAFT.md)。2026-10-20 Pre-Main 的 314 项主测试、Linux CI 与隔离 Origin 结果见 [Security](docs/SECURITY.md#api2-候选验证2026-10-20)。**生产 Registry API2** 与 **生产 Origin／OAuth** 是两个独立 Pending Gate；本地合同通过不表示生产已升级。
