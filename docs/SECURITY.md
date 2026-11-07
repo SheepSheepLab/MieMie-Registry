@@ -40,3 +40,11 @@ OAuth access token 仅服务端内存保存，绑定具体会话；不写数据�
 `poll-v1` 将结果领取绑定到开始登录时的 Origin、随机 requestId 和 SHA-256 verifier。无法获得 verifier 的页面不能查询登录进度、领取身份或抢先消耗结果。结果只在服务器内存中暂存，最长 60 秒；消息交接与主动领取共享一次性消费。返回 Hub 的凭证仍为 Registry 内存会话，Discord OAuth Token 始终留在服务器。
 
 弹窗 postMessage 是可选唤醒提示，不再是单点依赖；Cookie 仍仅用于顶层回调的 CSRF 绑定，禁止通过放宽 SameSite、开放通配 Origin 或取消 verifier 校验解决跨站登录问题。页面关闭/切换服务/退出会丢弃结果；服务重启后必须重新登录。
+
+## API2 候选验证（2026-10-20）
+
+Pre-Main 源码 `94d1a3e2fba59e98f96960f0402ab0d350da6b11`：`npm test` 314 PASS／0 FAIL／0 SKIP；[Linux development 工作流](https://github.com/SheepSheepLab/MieMie-Registry/actions/runs/39348425394)成功。此为该提交的既有回执，不把随后纯文档修改称作当时源码。API1／API2 Manifest 共享机器校验，hubApi 使用安全整数，API2 不豁免身份、双 hash、大小、空 data 或 Release 复读。
+
+隔离真实 Chromium 的 Origin／合成 OAuth 合同 6 项通过；10 个安全变体均被拒绝，另有两次各 110 项的对照运行。它们使用本机服务与固定上游，不是生产账号、真实 Discord 登录或生产 CORS 证明。生产 Registry API2 与生产 Origin／OAuth 分别 Pending；不扩大生产 allowlist，不关闭认证，不在本阶段操作生产数据库。主测试覆盖角色／治理、迁移、Catalog／Relay、认证和失败边界，不据此宣称全系统安全认证。
+
+原始日志与失败尝试保留于 Owner 私有 Pre-Main 审核包（见 [README](../README.md) 的当前候选范围）。公开仓库只提供摘要与真实 CI 链接，不公开用户数据、Token 或本机路径。已发布 0.6.1 的 204 项等历史记录保留原日期，不追溯更换数字。

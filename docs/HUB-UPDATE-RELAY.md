@@ -1,5 +1,7 @@
 # Hub update relay (0.3.1)
 
+> 版本与运维导航：本文原治理／验收／Relay 阶段记录及具体版本保持原意；未来部署必须按 [DEPLOYMENT](DEPLOYMENT.md#api2-候选未来部署前置条件未授权执行) 读取真实 service，并让 backup／health 调用 current 对应工具，不能直接照搬历史硬编码版本命令。
+
 > 历史部署记录：下文 0.3.1 / Schema 3 指当时的发布。当前本地 0.5.0 候选使用 Schema 4；部署与恢复请以 DEPLOYMENT.md、STORAGE.md 为准。本轮未部署。
 
 `POST /api/hub/releases/asset` accepts exactly positive integer `releaseId` and

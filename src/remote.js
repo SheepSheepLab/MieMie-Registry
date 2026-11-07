@@ -2,8 +2,9 @@ import {createGitHubClient} from './github-client.js';
 import {REGISTRY_VERSION} from './version.js';
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { createHash } from 'node:crypto';
-import {verifyPackage} from './package-validation.js';
-import { fail, plain, githubRepo, iconUrl, version, compareVersions, text } from './validation.js';
+import {verifyPackage, cleanManifest, validateExtensionPackageMetadata, validatePackageRelease, validatePackageAsset} from './package-validation.js';
+export {cleanManifest} from './package-validation.js';
+import { fail, plain, githubRepo, version, compareVersions, text } from './validation.js';
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 export async function boundedFetch(fetchImpl, url, { limit = 65536, timeout = 15000, headers = {}, method = 'GET', body, allowAssetRedirect = false } = {}) {
   const controller = new AbortController();
@@ -39,30 +40,6 @@ export async function boundedFetch(fetchImpl, url, { limit = 65536, timeout = 15
   finally { clearTimeout(timer); controller.abort(); }
 }
 function parseJSON(bytes) { try { return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)); } catch { fail(502, 'invalid_response', '上游 JSON 格式无效'); } }
-export function cleanManifest(value, repository, expectedVersion, ref = 'HEAD') {
-  if (!plain(value) || value.schemaVersion !== 1 || value.apiVersion !== 1 || !/^[a-z0-9][a-z0-9._-]{1,79}$/.test(value.id || '') || value.id === 'miemie.hub' || !version(value.version) || (expectedVersion && value.version !== expectedVersion) || githubRepo(value.repository).url.toLowerCase() !== repository.url.toLowerCase()) fail(400, 'invalid_manifest', 'Manifest 身份、版本、API 或仓库不匹配');
-  const manifest = { schemaVersion: 1, apiVersion: 1, id: text(value.id, 'Extension ID', 80), name: text(value.name, '名称', 80), version: value.version, author: text(value.author, '作者', 100), description: text(value.description, '简介', 2000), entry: text(value.entry, 'Entry', 200), repository: repository.url, license: text(value.license, 'License', 100) };
-  if (value.icon && typeof value.icon === 'string' && value.icon.length <= 2048) {
-    try {
-      const relative = !/^[a-z][a-z0-9+.-]*:/i.test(value.icon);
-      if (relative && (!/^[A-Za-z0-9_./-]+$/.test(value.icon) || value.icon.startsWith('/') || value.icon.split('/').some(p => ['.', '..', ''].includes(p)))) throw new Error('invalid relative icon');
-      manifest.iconUrl = iconUrl(relative ? `https://raw.githubusercontent.com/${repository.owner}/${repository.repo}/${encodeURIComponent(ref)}/${value.icon}` : value.icon);
-      manifest.icon = value.icon;
-    } catch { /* unsupported icon safely falls back to catalog/default */ }
-  }
-  if (value.homepage) { const url = new URL(value.homepage); if (url.protocol === 'https:' && !url.username && !url.password && value.homepage.length <= 2048) manifest.homepage = url.href; }
-  if (value.hubApi !== undefined) {
-    if (!plain(value.hubApi) || !Number.isInteger(value.hubApi.min) || !Number.isInteger(value.hubApi.max) || value.hubApi.min < 1 || value.hubApi.min > 1 || value.hubApi.max < 1) fail(400, 'invalid_manifest', 'Hub API 兼容范围不包含 v1');
-    manifest.hubApi = {min:value.hubApi.min,max:value.hubApi.max};
-  }
-  if (value.contributes?.launcher !== undefined) {
-    const launcher=value.contributes.launcher;
-    if (!plain(launcher) || (launcher.icon !== undefined && (typeof launcher.icon !== 'string' || launcher.icon.length > 16))) fail(400,'invalid_manifest','Launcher 能力无效');
-    manifest.contributes={launcher:{title:text(launcher.title,'Launcher',60)}};
-    if(launcher.icon !== undefined) manifest.contributes.launcher.icon=launcher.icon;
-  }
-  return manifest;
-}
 export function createGitHubAdapter({ fetchImpl = fetch, githubClient } = {}) {
   const client = githubClient || createGitHubClient({fetchImpl});
   async function json(url, limit = 1048576) { return parseJSON((await client.read(url, {limit, shareKey: 'lookup'})).bytes); }
@@ -88,16 +65,15 @@ export function createGitHubAdapter({ fetchImpl = fetch, githubClient } = {}) {
     const metadata = Array.isArray(release?.assets) ? release.assets.filter(a => a.name === 'MieMie-Extension-update.json') : [];
     if (metadata.length === 1) {
       try {
-        const asset = metadata[0];
-        if (!Number.isSafeInteger(asset.id) || asset.id <= 0 || asset.state !== 'uploaded' || !Number.isInteger(asset.size) || asset.size <= 0 || asset.size > 65536 || !/^sha256:[a-f0-9]{64}$/.test(asset.digest || '') || asset.url !== `${base}/releases/assets/${asset.id}`) throw new Error('metadata asset');
+        validatePackageRelease(release, release.id);
+        const asset = validatePackageAsset(release, 'MieMie-Extension-update.json', base, 65536);
         const { bytes } = await client.read(asset.url, {limit: 65536, binary: true, shareKey: JSON.stringify([base, release.id, asset.id, asset.name, asset.size, asset.digest, asset.url, asset.state])});
         if (bytes.length !== asset.size || `sha256:${hash(bytes)}` !== asset.digest) throw new Error('metadata digest');
-        const m = parseJSON(bytes), manifest = cleanManifest(m.manifest, repo, result.release.version, release.tag_name);
-        const validAsset = plain(m.asset) && typeof m.asset.name === 'string' && /^[A-Za-z0-9_.-]+\.json$/.test(m.asset.name) && m.asset.name !== 'MieMie-Extension-update.json' && Number.isInteger(m.asset.size) && m.asset.size > 0 && m.asset.size <= 16777216 && /^[a-f0-9]{64}$/.test(m.asset.sha256 || '');
-        if (m.schemaVersion !== 1 || m.productId !== manifest.id || m.version !== manifest.version || m.tag !== release.tag_name || m.format !== 'tavern-helper-script' || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(m.scriptId || '') || m.scriptId === 'e85cd9a3-6352-4b23-938a-6c94d826b4d3' || !validAsset || !/^[a-f0-9]{64}$/.test(m.contentSha256 || '')) throw new Error('metadata identity');
-        const packages = release.assets.filter(a => a.name === m.asset.name);
-        if (packages.length !== 1 || packages[0].size !== m.asset.size || packages[0].digest !== `sha256:${m.asset.sha256}` || packages[0].state !== 'uploaded' || !Number.isSafeInteger(packages[0].id) || packages[0].url !== `${base}/releases/assets/${packages[0].id}`) throw new Error('package metadata');
-        const payload=await client.read(packages[0].url,{limit:16777216,timeout:60000,binary:true});
+        const m = validateExtensionPackageMetadata(parseJSON(bytes), repo, release);
+        const manifest = cleanManifest(m.manifest, repo, result.release.version, release.tag_name);
+        const packageAsset = validatePackageAsset(release, m.asset.name, base, 16777216);
+        if (packageAsset.size !== m.asset.size || packageAsset.digest !== `sha256:${m.asset.sha256}`) throw new Error('package metadata');
+        const payload=await client.read(packageAsset.url,{limit:16777216,timeout:60000,binary:true});
         if(payload.bytes.length!==m.asset.size||hash(payload.bytes)!==m.asset.sha256)throw Error('package digest');
         verifyPackage(payload.bytes,m);
         result.manifest = manifest; result.compatibility = 'installable'; result.reason = '符合机器安装包规范；不代表安全审核或作者认证';

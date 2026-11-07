@@ -1,5 +1,7 @@
 # Governance final acceptance — 0.3.2
 
+> 版本与运维导航：本文原治理／验收／Relay 阶段记录及具体版本保持原意；未来部署必须按 [DEPLOYMENT](DEPLOYMENT.md#api2-候选未来部署前置条件未授权执行) 读取真实 service，并让 backup／health 调用 current 对应工具，不能直接照搬历史硬编码版本命令。
+
 > 历史验收记录：下文 Schema 3 是此前治理版本的部署基线。当前本地 0.5.0 候选使用 Schema 4，升级先备份；以 DEPLOYMENT.md、STORAGE.md 为准。本轮未部署。
 
 ## Blocking finding fixed
