@@ -69,10 +69,12 @@ Discord 项目 `github`、`version`、`extensionId` 为 null。只有 `type === 
 4. Discord 官方 OAuth 使用 `identify guilds`，服务端验证一次性 state/Cookie 后交换 Token 并同步 Profile。Discord Token 和内部 User ID 不传给 Hub。
 5. Hub 每 3 秒或返回焦点时 `POST /api/auth/complete {requestId,codeVerifier}`。待授权时返回 202 `{status:"pending"}`；成功结果只可领取一次，绑定原 Origin、requestId 和 verifier。任意错误来源、错误 verifier、未知/过期请求均拒绝，不消耗合法结果。每个流程至多 40 次/分钟，并受全局限流约束。
 6. 返回 `{token,expiresAt,profile:{displayName,avatarUrl},isAdmin,canSubmit}` 后 Hub 使用内存 Registry Bearer Token 请求 `/api/me`，确认后通知「我的」刷新。所有 Hub API 请求均 `credentials: omit`；CORS 显式允许 Origin 和 Authorization，无需 Access-Control-Allow-Credentials 或第三方 Cookie。
-7. 回调仍尝试严格 targetOrigin 的 postMessage，作为轮询唤醒提示；成功回调页在 1.5 秒后尝试自行关闭，浏览器拒绝关闭时显示手动返回提示。Hub 检查 origin/source/requestId，但消息丢失、opener=null、COOP 断开后的 popup.closed 不影响新协议。旧 `/api/auth/exchange {code,requestId,codeVerifier}` 保留兼容，与 complete 共享一次性消费状态。
+7. 回调仍尝试严格 targetOrigin 的 postMessage，作为轮询唤醒提示；成功回调页在 1.5 秒后尝试自行关闭，也提供手动关闭按钮。浏览器成功页尝试将地址改为 `/api/auth/return`；浏览器重复导航至近期已处理的回调时进入该返回页。返回页只提示回 Hub 查看登录状态。Hub 检查 origin/source/requestId，但消息丢失、opener=null、COOP 断开后的 popup.closed 不影响轮询。旧 `/api/auth/exchange {code,requestId,codeVerifier}` 保留兼容，与 complete 共享一次性消费状态。
 8. state/待授权交接最长 5 分钟，成功结果保留 60 秒。取消、超时、切换 Registry、退出或 teardown 停止轮询并忽略迟到结果；重载需要重新登录。仅关闭弹窗不会立即结束新协议，因为浏览器隔离也会呈现 closed；未完成授权会在截止时间明确失败。
 
 OAuth Secret、Discord Token、verifier 和 Registry 会话不写 URL 或持久浏览器存储。服务重启丢失内存交接时安全失败，需要重新登录。回调显示完成只代表 Discord 交换成功；Hub 显示头像/名称才代表交接和 current-user 校验完成。
+
+浏览器打开失败的 Discord 回调时，Registry 保留 HTTP 错误状态并展示返回提示。非导航请求仍收到结构化 JSON 错误。
 
 ## Authenticated
 

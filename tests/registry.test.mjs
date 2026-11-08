@@ -36,6 +36,30 @@ async function fixture(t, options={}) {
 test('public catalog works with no OAuth configuration; unauthenticated posting rejected',async t=>{const f=await fixture(t,{env:{DISCORD_CLIENT_ID:'',DISCORD_CLIENT_SECRET:''}});assert.equal((await f.req('/api/catalog')).status,200);assert.equal((await f.req('/api/submissions',{method:'POST',body:submission()})).status,401);assert.equal((await f.req('/api/auth/start',{method:'POST',body:{}})).data.error.code,'oauth_not_configured');});
 test('OAuth state, browser binding, one-time callback and bridge verifier',async t=>{const f=await fixture(t),flow=await f.begin();assert.equal((await f.callback({...flow,state:'incorrect'})).status,400);assert.equal((await f.callback(flow,'A',{headers:{}})).status,400);const cb=await f.callback(flow);assert.equal(cb.status,200);assert.equal((await f.callback(flow)).status,400);const bridge=JSON.parse(cb.data.match(/postMessage\((\{.*?\}),/)[1]);assert.equal((await f.req('/api/auth/exchange',{method:'POST',body:{...bridge,codeVerifier:'x'.repeat(43)}})).status,400);const good={code:bridge.code,requestId:flow.requestId,codeVerifier:flow.verifier};assert.equal((await f.req('/api/auth/exchange',{method:'POST',body:good})).status,200);assert.equal((await f.req('/api/auth/exchange',{method:'POST',body:good})).status,400);});
 test('OAuth state expires and authorization URL cannot be reused',async t=>{const f=await fixture(t),flow=await f.begin();assert.equal((await f.req(`/api/auth/authorize?requestId=${flow.requestId}`,{origin:null})).status,400);f.advance(300001);assert.equal((await f.callback(flow)).status,400);});
+test('browser callback can be refreshed or replayed without displaying JSON or exchanging the authorization twice',async t=>{
+ const f=await fixture(t),flow=await f.begin();
+ const accept={Accept:'text/html'};
+ const invalid=await f.callback(flow,'A',{headers:accept});
+ assert.equal(invalid.status,400);assert.match(invalid.headers.get('content-type'),/^text\/html/);
+ assert.match(invalid.data,/授权未完成/);assert.doesNotMatch(invalid.data,/invalid_state|postMessage/);
+ const success=await f.callback(flow,'A',{headers:{...accept,Cookie:flow.cookie}});
+ assert.equal(success.status,200);assert.match(success.data,/history\.replaceState\(null,'',"\/api\/auth\/return"\)/);
+ assert.match(success.data,/setTimeout\(closeAuthWindow,1500\)/);
+ const repeat=await f.callback(flow,'A',{headers:accept});
+ const oldRefresh=await f.req('/api/auth/callback',{origin:null,headers:accept});
+ for(const result of [repeat,oldRefresh]){
+  assert.equal(result.status,303);assert.equal(result.headers.get('location'),'/api/auth/return');
+ }
+ const landing=await f.req(repeat.headers.get('location'),{origin:null,headers:accept});
+ assert.equal(landing.status,200);assert.equal(landing.headers.get('cache-control'),'no-store');
+ assert.match(landing.headers.get('content-security-policy'),/frame-ancestors 'none'/);
+ assert.match(landing.data,/关闭此窗口/);assert.match(landing.data,/setTimeout\(closeAuthWindow,1500\)/);
+ assert.doesNotMatch(landing.data,/postMessage|invalid_state|授权已完成/);
+ assert.equal((await f.callback(flow)).status,400);
+ const complete=()=>f.req('/api/auth/complete',{method:'POST',body:{requestId:flow.requestId,codeVerifier:flow.verifier}});
+ assert.equal((await complete()).status,200);assert.equal((await complete()).status,400);
+ assert.equal(f.store.db.prepare('SELECT count(*) AS n FROM sessions').get().n,1);
+});
 test('bridge expires independently and is origin-bound',async t=>{const f=await fixture(t),flow=await f.begin(),cb=await f.callback(flow),bridge=JSON.parse(cb.data.match(/postMessage\((\{.*?\}),/)[1]);assert.equal((await f.req('/api/auth/exchange',{method:'POST',origin:'http://127.0.0.1:8000',body:{...bridge,codeVerifier:flow.verifier}})).status,400);f.advance(60001);assert.equal((await f.req('/api/auth/exchange',{method:'POST',body:{...bridge,codeVerifier:flow.verifier}})).status,400);});
 test('successful login contains only public profile and Registry opaque token',async t=>{const f=await fixture(t),login=await f.login();assert.equal(login.profile.displayName,'Development Fixture A');assert.equal(login.token.length,43);assert.equal(login.isAdmin,false);assert.equal(JSON.stringify(login.profile).includes(IDS.A),false);const row=f.store.db.prepare('SELECT * FROM sessions').get();assert.notEqual(row.hash,login.token);assert.equal(row.discord_id,IDS.A);});
 test('sessions are bound to original origin, expire, and logout revokes',async t=>{const f=await fixture(t),a=await f.login();assert.equal((await f.req('/api/me',{token:a.token,origin:'http://127.0.0.1:8000'})).status,401);assert.equal((await f.req('/api/auth/logout',{method:'POST',token:a.token,body:{}})).status,200);assert.equal((await f.req('/api/me',{token:a.token})).status,401);const b=await f.login();f.advance(28800001);assert.equal((await f.req('/api/me',{token:b.token})).status,401);});

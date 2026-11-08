@@ -28,13 +28,16 @@ export function createApp({ config, store, discord = createDiscordAdapter(config
   hubRelay ||= createHubReleaseRelay({githubClient, now});
   store.bootstrapAdmins(config.adminIds || [],now());
   const flows = new Map(), bridges = new Map(), handoffs = new Map(), rates = new Map(), previewCache = new Map();
+  // Repeated browser navigation can show the closing page without reusing an OAuth code.
+  const consumedCallbacks = new Map();
+  const authReturnPath = '/api/auth/return';
   const relayRequests = new Map();
   // OAuth access tokens exist only in process memory, bound to a Registry session.
   // Restart, logout or expiry loses access and requires a fresh Discord login.
   const sessionCredentials = new Map();
   const tokenHash = value => createHmac('sha256', config.sessionSecret).update(value).digest('hex');
   function prune() {
-    for (const map of [flows, bridges, handoffs]) for (const [key, value] of map) if (value.expiresAt <= now()) map.delete(key);
+    for (const map of [flows, bridges, handoffs, consumedCallbacks]) for (const [key, value] of map) if (value.expiresAt <= now()) map.delete(key);
     for (const [key, value] of rates) if (value.until <= now()) rates.delete(key);
     for (const [key, value] of sessionCredentials) if (value.expiresAt <= now()) sessionCredentials.delete(key);
     store.expireSessions(now());
@@ -115,14 +118,29 @@ export function createApp({ config, store, discord = createDiscordAdapter(config
     return { token, expiresAt: new Date(expiresAt).toISOString(), profile: store.profileDTO(user), ...rolesFor(config,store,user), banned: !!user.banned, canSubmit: !user.banned };
   }
   function send(res, status, value) { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(value)); }
+  function sendAuthWindow(res, status, message, notification = '') {
+    const nonce = random();
+    res.setHeader('Content-Security-Policy', `default-src 'none'; script-src 'nonce-${nonce}'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'`);
+    res.writeHead(status, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.end(`<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>MieMie Discord 登录</title><h1>MieMie Discord 登录</h1><p>${message}</p><button type="button">关闭此窗口</button><p>如果窗口没有关闭，请手动关闭并返回咩咩Hub。</p><script nonce="${nonce}">
+const closeAuthWindow=()=>{try{window.close();}catch{}};
+document.querySelector('button').addEventListener('click',closeAuthWindow);
+${status===200?'setTimeout(closeAuthWindow,1500);':''}
+try{history.replaceState(null,'',${jsonScript(authReturnPath)});}catch{}
+${notification}
+</script></html>`);
+  }
+  function returnToHubWindow(res) {res.writeHead(303, {Location: authReturnPath});res.end();}
   const handler = async (req, res) => {
     let callbackRequestId;
+    let browserCallback = false;
     res.setHeader('X-Content-Type-Options', 'nosniff'); res.setHeader('Referrer-Policy', 'no-referrer'); res.setHeader('Cache-Control', 'no-store');
     res.setHeader('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'");
     if (config.production) res.setHeader('Strict-Transport-Security', 'max-age=31536000');
     try {
       prune(); limit(`ip:${req.socket.remoteAddress || 'unknown'}`);
       const requestUrl = new URL(req.url, config.publicBaseUrl), path = requestUrl.pathname, method = req.method;
+      browserCallback = path === '/api/auth/callback' && method === 'GET' && (req.headers['sec-fetch-mode'] === 'navigate' || /(?:^|,)\s*text\/html\b/i.test(req.headers.accept || ''));
       const origin = req.headers.origin;
       if (origin) {
         if (!config.allowedOrigins.has(origin)) fail(403, 'origin_denied', '此页面来源未获 Registry 允许');
@@ -158,14 +176,21 @@ export function createApp({ config, store, discord = createDiscordAdapter(config
         res.writeHead(302, { Location: discord.authorizationUrl(flow.state) }); res.end(); return;
       }
       if (path === '/api/auth/callback' && method === 'GET') {
-        const state = requestUrl.searchParams.get('state');
+        const state = requestUrl.searchParams.get('state'), authorization = requestUrl.searchParams.get('code');
+        const callbackKey = /^[A-Za-z0-9_-]{43}$/.test(state || '') && authorization && authorization.length <= 2048
+          ? sha(state + ':' + authorization) : null;
+        if (browserCallback && (!requestUrl.search || (callbackKey && consumedCallbacks.has(callbackKey)))) return returnToHubWindow(res);
         const flow = [...flows.values()].find(f => f.started && safeEqual(f.state, state));
         if (!flow || flow.expiresAt <= now() || !safeEqual(cookies(req.headers.cookie)[`miemie_oauth_${flow.requestId}`], flow.cookie)) fail(400, 'invalid_state', 'OAuth state 或浏览器会话无效');
         callbackRequestId = flow.requestId;
         flows.delete(flow.requestId); // one use, including upstream failures
         res.setHeader('Set-Cookie', `miemie_oauth_${flow.requestId}=; Path=/api/auth/callback; Max-Age=0; HttpOnly; SameSite=Lax${config.production ? '; Secure' : ''}`);
         if (requestUrl.searchParams.has('error')) fail(400, 'oauth_denied', 'Discord 授权未完成');
-        const code = text(requestUrl.searchParams.get('code'), '授权码', 2048);
+        const code = text(authorization, '授权码', 2048);
+        if (callbackKey) {
+          if (consumedCallbacks.size >= 1000) consumedCallbacks.delete(consumedCallbacks.keys().next().value);
+          consumedCallbacks.set(callbackKey, {expiresAt: now() + 300000});
+        }
         const { profile, credentials } = await discord.exchange(code);
         if (!plain(profile) || !plain(credentials) || typeof credentials.accessToken !== 'string' || !credentials.accessToken || credentials.accessToken.length > 4096 || !Number.isSafeInteger(credentials.expiresAt) || credentials.expiresAt <= now() || !Array.isArray(credentials.scopes) || !['identify', 'guilds'].every(scope => credentials.scopes.includes(scope))) fail(502, 'discord_auth_failed', 'Discord 授权不完整，请重新登录');
         if (!/^\d{15,22}$/.test(profile.id || '')) fail(502, 'invalid_profile', 'Discord 身份无效');
@@ -175,11 +200,10 @@ export function createApp({ config, store, discord = createDiscordAdapter(config
         const bridge = random(); bridges.set(sha(bridge), { discordId: profile.id, credentials, origin: flow.origin, challenge: flow.challenge, requestId: flow.requestId, expiresAt: now() + 60000 });
         const handoff = handoffs.get(flow.requestId);
         if (handoff) { handoff.bridgeKey = sha(bridge); handoff.expiresAt = now() + 60000; }
-        const nonce = random();
-        res.setHeader('Content-Security-Policy', `default-src 'none'; script-src 'nonce-${nonce}'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'`);
-        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-        res.end(`<!doctype html><meta charset="utf-8"><title>MieMie Discord 登录</title><p>Discord 授权已完成，此窗口将自动关闭。若浏览器阻止关闭，请手动返回 MieMie Hub。</p><script nonce="${nonce}">try{if(window.opener){window.opener.postMessage(${jsonScript({ type: 'miemie-registry-auth', code: bridge, requestId: flow.requestId })},${jsonScript(flow.origin)});}}catch{}history.replaceState(null,'','/api/auth/callback');setTimeout(()=>{try{window.close();}catch{}},1500);</script>`); return;
+        return sendAuthWindow(res, 200, 'Discord 授权已完成。请返回咩咩Hub查看登录状态。',
+          `try{if(window.opener){window.opener.postMessage(${jsonScript({ type: 'miemie-registry-auth', code: bridge, requestId: flow.requestId })},${jsonScript(flow.origin)});}}catch{}`);
       }
+      if (path === authReturnPath && method === 'GET') return sendAuthWindow(res, 200, '请返回咩咩Hub查看登录状态。');
       if (path === '/api/auth/complete' && method === 'POST') {
         const body = await readJSON(req);
         if (!/^[A-Za-z0-9_-]{43}$/.test(body.requestId || '') || !/^[A-Za-z0-9._~-]{43,128}$/.test(body.codeVerifier || '')) fail(400, 'invalid_handoff', '登录交接无效或已过期，请重新登录');
@@ -319,8 +343,9 @@ export function createApp({ config, store, discord = createDiscordAdapter(config
       if (res.headersSent) { res.destroy(); return; }
       const status = error.status || 500;
       if (status === 429) res.setHeader('Retry-After', String(error.retryAt ? Math.max(1, Math.ceil((Date.parse(error.retryAt) - now()) / 1000)) : 60));
+      if (browserCallback) return sendAuthWindow(res, status, '这次 Discord 授权未完成。请返回咩咩Hub查看登录状态；如仍未登录，请重新发起。');
       send(res, status, { error: { code: error.code || 'internal_error', message: status === 500 ? '服务暂时不可用' : error.message, ...(error.code === 'github_rate_limited' ? {retryAt: error.retryAt} : {}) } });
     }
   };
-  return { handler, close() { githubClient.close(); for (const controller of relayRequests.keys()) controller.abort(); relayRequests.clear(); sessionCredentials.clear(); flows.clear(); bridges.clear(); handoffs.clear(); rates.clear(); previewCache.clear(); }, store };
+  return { handler, close() { githubClient.close(); for (const controller of relayRequests.keys()) controller.abort(); relayRequests.clear(); sessionCredentials.clear(); flows.clear(); bridges.clear(); handoffs.clear(); consumedCallbacks.clear(); rates.clear(); previewCache.clear(); }, store };
 }

@@ -2,7 +2,7 @@
 
 本目录服务属于咩咩（MieMie）开源软件与社区生态，由生态 Founder / 创始人 SheepSheep 发起和创建。SheepSheepLab 是官方 GitHub 开发、维护与发布命名空间，官方项目主要通过该命名空间维护和发布，并欢迎社区贡献者共同参与。
 
-MieMie Extension Ecosystem MVP 的独立目录与 Discord 投稿服务，当前源码为 **0.7.0 未发行候选**（Owner 已批准版本号；API2 Manifest 支持，HTTP API v1、DB Schema5 与机器 Schema1 保持。正式 Release 与生产部署分别验收）。软件代码 Copyright © 2026 SheepSheep，采用 [GNU GPL v3.0 or later](LICENSE)，SPDX：`GPL-3.0-or-later`。
+MieMie Extension Ecosystem MVP 的独立目录与 Discord 投稿服务，当前源码版本为 **0.7.1**（支持 Extension API2 Manifest，沿用 HTTP API v1、DB Schema 5 与机器 Schema 1）。软件代码 Copyright © 2026 SheepSheep，采用 [GNU GPL v3.0 or later](LICENSE)，SPDX：`GPL-3.0-or-later`。
 
 社区贡献者（Community Contributors）保留各自的贡献者身份；除另有说明，贡献内容的版权归相应贡献者所有。
 
@@ -13,6 +13,10 @@ Registry 只持久保存目录元数据、Discord 投稿身份和必要管理记
 只有用户主动提交的记录进入 Catalog；仓库预览不会创建投稿，也不预置 Polisher。
 
 Discord 来源仅原帖所在服务器成员可见；GitHub 项目仍可选择公开或 Guild-only，可选 Discord 发布帖与可见范围依据分别保存。受限投稿要求投稿者属于该 Guild；成员验证不代表作者认证。权限使用 Guild ID，不使用服务器名称。
+
+## 0.7.1 发布说明
+
+改善 Discord 授权后的弹窗收尾。成功页尝试自动关闭，并提供手动关闭按钮。重复访问已处理的回调会进入返回页，Hub 继续通过原有的一次性交接确认登录状态。详见 [Discord 登录交接](docs/API.md#discord-登录交接)。
 
 ## 0.6.1 发布说明
 
@@ -86,8 +90,8 @@ Catalog 下架／隐藏不远程删除用户已安装的代码。已安装用户
 
 > 隐私历史迁移说明：文中涉及的提交标识已对应至迁移后历史；历史测试时间、结论及贡献归属保持原意，不表示重新执行了当时的验收。原始记录由维护者受保护保存。
 
-## Hub 0.9.0 API2 开发候选（未部署）
+## Hub 0.9.0 API2 开发候选（0.7.0 历史记录）
 
 本分支新增 Extension Manifest API2 验证；Registry HTTP API 仍为 v1，DB schema 仍为 5，Manifest／Package／Machine Metadata／Build Identity Schema 仍为 1。`src/package-validation.js` 为 Catalog（`remote.js`）与 Package Relay（`github-relay.js`）共享校验入口，完整字段与边界见 [API](docs/API.md#extension-api2-候选合同2026-10-20)。
 
-已发布 0.6.1、其 Release 记录与部署历史不被本候选改写；本分支 package version 已按 Owner 裁定为 0.7.0，尚未创建 Tag／Release 或部署；不得替换 0.6.1 正式资产。当前说明见 [0.7.0 发行草稿](docs/RELEASE-0.7.0-DRAFT.md)。2026-10-20 Pre-Main 的 314 项主测试、Linux CI 与隔离 Origin 结果见 [Security](docs/SECURITY.md#api2-候选验证2026-10-20)。**生产 Registry API2** 与 **生产 Origin／OAuth** 是两个独立 Pending Gate；本地合同通过不表示生产已升级。
+该阶段的候选版本、尚待发行及部署的状态记录在 [0.7.0 发行草稿](docs/RELEASE-0.7.0-DRAFT.md)。2026-10-20 Pre-Main 的 314 项主测试、Linux CI 与隔离 Origin 结果见 [Security](docs/SECURITY.md#api2-候选验证2026-10-20)。当时 **生产 Registry API2** 与 **生产 Origin／OAuth** 是两个独立 Pending Gate。正式发行见 [0.7.0 Release](https://github.com/SheepSheepLab/MieMie-Registry/releases/tag/v0.7.0)。
