@@ -48,8 +48,13 @@ test('v3 migration adds links once without publishing an old private visibility 
 });
 test('successful OAuth callback closes its own detached window, without affecting PKCE handoff',async t=>{
  const f=await fixture(t),flow=await f.begin(),response=await f.callback(flow);assert.equal(response.status,200);
- const script=response.data.match(/<script nonce="[^"]+">([\s\S]*?)<\/script>/)[1];let close=0;
- runInNewContext(script,{window:{opener:null,close(){close++;}},history:{replaceState(){}},setTimeout(fn,delay){assert.equal(delay,1500);fn();}});assert.equal(close,1);
+ const script=response.data.match(/<script nonce="[^"]+">([\s\S]*?)<\/script>/)[1];let close=0,manualClose;
+ runInNewContext(script,{window:{opener:null,close(){close++;}},
+  document:{querySelector(){return {addEventListener(type,fn){assert.equal(type,'click');manualClose=fn;}};}},
+  history:{replaceState(){throw Error('Browser rejected history update');}},
+  setTimeout(fn,delay){assert.equal(delay,1500);fn();}
+ });
+ assert.equal(close,1);manualClose();assert.equal(close,2);
  const complete=await f.req('/api/auth/complete',{method:'POST',body:{requestId:flow.requestId,codeVerifier:flow.verifier}});assert.equal(complete.status,200);assert.ok(complete.data.token);
  const denied=await f.callback(flow);assert.equal(denied.status,400);assert.doesNotMatch(JSON.stringify(denied.data),/window.close/);
 });
