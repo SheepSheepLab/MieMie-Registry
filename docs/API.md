@@ -6,7 +6,7 @@
 {"error":{"code":"unauthorized","message":"请使用 Discord 登录"}}
 ```
 
-所有写操作必须携带已允许的 `Origin` 和 `Content-Type: application/json`。认证 API 使用 `Authorization: Bearer <opaque Registry session token>`，并绑定创建会话时的 Origin。浏览器自动设置 Origin。没有 Cookie 认证回退；客户端不得把会话 Token 放入 URL、localStorage、日志或 Catalog。
+写入账号、投稿及治理数据必须携带已登记的 `Origin` 和 `Content-Type: application/json`。认证 API 使用 `Authorization: Bearer <opaque Registry session token>`，并绑定创建会话时的 Origin。浏览器自动设置 Origin。没有 Cookie 认证回退；客户端不得把会话 Token 放入 URL、localStorage、日志或 Catalog。
 
 ## Public
 
@@ -14,7 +14,17 @@
 - `GET /api/catalog/:id` → 单条当前用户可见项目；下架、隐藏、无成员权限及未知 ID 均返回 404。
 - `GET /api/avatars/:opaqueKey` → 受限 PNG；key 为随机不透明标识。
 - `GET /health` → `{status,version}`。
-- `POST /api/packages/github/asset` → 经验证的原始文件字节，`application/octet-stream`、准确 `Content-Length`、`Cache-Control: no-store`。无需 Discord 登录、Bearer Token 或 GitHub Token；必须携带配置允许的 Origin。
+- `POST /api/packages/github/asset` → 经验证的原始文件字节，`application/octet-stream`、准确 `Content-Length`、`Cache-Control: no-store`。无需 Discord 登录或 Token，必须携带非空且非 `null` 的浏览器 Origin。
+
+未登记的浏览器 Origin 可匿名访问目录列表／详情、下列公开 GitHub 查询、作者附件及 Hub 官方附件接口。开放响应使用 `Access-Control-Allow-Origin: *`，客户端应省略所有凭据。携带 Registry Bearer 的目录请求仍需精确来源和成员验证。
+
+### 公开 GitHub Release 查询
+
+- `GET /api/github/repos/:owner/:repo` 返回公开仓库的规范名称和公开标记。
+- `GET /api/github/repos/:owner/:repo/releases?per_page=100&page=1` 返回 Release ID、Tag 与 Draft 标记，最多支持 10 页。Draft 只保留分页占位。
+- `GET /api/github/repos/:owner/:repo/releases/:id` 或 `GET /api/github/repos/:owner/:repo/releases/tags/:tag` 返回公开 Release 的相同字段及附件 ID、名称、状态、大小、Digest 和 GitHub URL。Tag 查询使用 `v` 开头的三段数字。
+
+查询仅访问 GitHub 官方 API，拒绝私有仓库、Draft 详情、凭据和任意上游 URL。每客户端每分钟最多 60 次，GitHub 单个响应最多读取 1 MiB。返回值供 Hub 定位 Release，安装仍需执行独立的附件和完整性校验。
 
 ### 作者 GitHub 字节传输
 

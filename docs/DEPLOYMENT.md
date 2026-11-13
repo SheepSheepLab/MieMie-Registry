@@ -89,14 +89,26 @@ docker compose exec -T registry node tools/backup.mjs
 
 - 为 Registry 配置长期稳定 HTTPS 域名、TLS 和 Node 24+ 进程监督；反向代理只转发此服务。
 - 配置真实 Secret、Redirect URI、数据库持久卷、最小文件权限、管理员 allowlist。
-- 配置准确酒馆 Origin。第一版不开放任意 Origin；新域名需由运维添加。生产允许明确的本机 HTTP 酒馆 Origin（localhost／127.0.0.1），Registry 本身仍必须 HTTPS。
+- 为登录、带凭据的目录及投稿配置准确的酒馆 Origin。生产允许明确的本机 HTTP 酒馆 Origin（localhost／127.0.0.1），Registry 本身仍必须 HTTPS。公开目录和下载可匿名跨来源访问。
 - 反向代理不得记录 Authorization、Cookie、OAuth 回调 `code`／`state` 查询串；应用自身不输出凭据和用户数据日志。
-- 当前 IP 限流只信任 socket 地址，不信任用户可伪造的 X-Forwarded-For。反向代理后的用户会共享应用额度（例如 OAuth 开始 10 次／10 分钟、relay 12 次／分钟）。边缘代理另加每 IP 限流不会解除这层共享额度：多用户正式开放前须根据已确定的可信代理拓扑配置、审查和调整应用限流策略；当前配置适合小规模受控联调，不能声称已完成公网容量验证。
+- 按实际代理拓扑验证客户端限流，并以不同网络同时测试下载。见下节。
 - 备份、恢复演练、磁盘监控、滥用处理联系渠道，以及针对实际部署的隐私／数据保留说明。备份包含内部身份数据，不能公开下载。
 - 验证浏览器 popup 能保留 opener、Tavern 与 Registry 的 CORS 成功；OAuth cookies 仅在 Registry popup 内使用，不依赖 Hub 第三方 Cookie。
 - 不把测试 Fixture 冒充真实社区投稿。没有自动导入假目录。
 
 本阶段没有完成真实 OAuth／生产域名部署验证。自动测试中的 Discord 和 GitHub Adapter 明确为测试注入，生产 server.js 没有对应登录后门或测试账号选项。
+
+### 反向代理与限流
+
+默认按连接地址限流。单台 Caddy 直接接收公网流量、Registry 明确绑定 `127.0.0.1` 时，可在该域名现有的转发块中加入客户端地址覆盖，再为 Registry 设 `TRUST_LOOPBACK_PROXY=true`：
+
+```caddyfile
+reverse_proxy 127.0.0.1:8787 {
+    header_up X-MieMie-Client-IP {http.request.remote.host}
+}
+```
+
+代理必须覆盖外部请求同名头，Registry 只在收到配置回环地址的连接时读取一个有效 IP。应用忽略 `X-Forwarded-For`。如果链路还有 CDN／代理，或 Registry 经容器非回环接口接收转发，沿用默认配置，先确认连接来源再决定适配。启用前核对实际监听、防火墙、代理配置与伪造头测试。每客户端下载及全局并发上限继续生效。备份服务配置和代理配置，切换失败时与程序一起恢复。
 
 ## 最短真实联调
 

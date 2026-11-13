@@ -2,7 +2,7 @@
 
 本目录服务属于咩咩（MieMie）开源软件与社区生态，由生态 Founder / 创始人 SheepSheep 发起和创建。SheepSheepLab 是官方 GitHub 开发、维护与发布命名空间，官方项目主要通过该命名空间维护和发布，并欢迎社区贡献者共同参与。
 
-MieMie Extension Ecosystem MVP 的独立目录与 Discord 投稿服务，当前源码版本为 **0.7.1**（支持 Extension API2 Manifest，沿用 HTTP API v1、DB Schema 5 与机器 Schema 1）。软件代码 Copyright © 2026 SheepSheep，采用 [GNU GPL v3.0 or later](LICENSE)，SPDX：`GPL-3.0-or-later`。
+MieMie Extension Ecosystem MVP 的独立目录与 Discord 投稿服务，当前源码版本为 **0.7.2**（支持 Extension API2 Manifest，沿用 HTTP API v1、DB Schema 5 与机器 Schema 1）。软件代码 Copyright © 2026 SheepSheep，采用 [GNU GPL v3.0 or later](LICENSE)，SPDX：`GPL-3.0-or-later`。
 
 社区贡献者（Community Contributors）保留各自的贡献者身份；除另有说明，贡献内容的版权归相应贡献者所有。
 
@@ -13,6 +13,10 @@ Registry 只持久保存目录元数据、Discord 投稿身份和必要管理记
 只有用户主动提交的记录进入 Catalog；仓库预览不会创建投稿，也不预置 Polisher。
 
 Discord 来源仅原帖所在服务器成员可见；GitHub 项目仍可选择公开或 Guild-only，可选 Discord 发布帖与可见范围依据分别保存。受限投稿要求投稿者属于该 Guild；成员验证不代表作者认证。权限使用 Guild ID，不使用服务器名称。
+
+## 0.7.2 发布说明
+
+公开目录和经过校验的公开下载可从未登记的酒馆地址匿名访问。Hub 1.0.1 在 GitHub API 直连失败时可经 Registry 查询公开 Release。Discord 登录、投稿、成员专属目录和管理仍要求登记来源并通过身份校验。反向代理部署可按真实客户端地址限流，配置见 [部署说明](docs/DEPLOYMENT.md#反向代理与限流)。
 
 ## 0.7.1 发布说明
 
@@ -44,7 +48,7 @@ npm start
 
 默认只监听 `127.0.0.1:8787`，自动建立 `data/registry.sqlite`。没有 OAuth 配置时公开 Catalog 可运行（初始为空），登录会明确报告尚未配置，不会启用假账号或登录后门。
 
-将 `.env.example` 复制为本地 `.env`，填写自己的 Discord 开发者应用配置，再重新启动。`.env`、数据库和备份均被 Git 忽略。开发测试连接位于 Hub「设置 → 高级 / 开发者选项」，默认折叠；生产 Hub 内置官方 HTTPS 地址，普通用户无需配置。服务端 `CORS_ORIGINS` 必须包含酒馆页面的精确 Origin。
+将 `.env.example` 复制为本地 `.env`，填写自己的 Discord 开发者应用配置，再重新启动。`.env`、数据库和备份均被 Git 忽略。Hub 开发构建通过构建参数配置测试服务，生产 Hub 内置官方 HTTPS 地址。登录及带凭据的访问要求服务端 `CORS_ORIGINS` 包含酒馆页面的精确 Origin。
 
 提供 Dockerfile、Compose、健康检查和 SQLite／备份持久卷配置。生产模式缺少真实 HTTPS 地址、OAuth 应用或私有 Secret 时拒绝启动。官方生产服务使用 https://registry.sheepsheeplab.com；生产版本以 /health 为准。见 [部署说明](docs/DEPLOYMENT.md)。
 
@@ -70,7 +74,7 @@ npm run backup
 
 Catalog 下架／隐藏不远程删除用户已安装的代码。已安装用户仍可使用本地版本，并直接从原作者 GitHub 检查更新；本阶段没有撤销代码或远程停用机制。
 
-开发模式仅测试 GitHub 安装下载时无需 Discord Client Secret：启动 Registry，将酒馆页面 Origin 加入 `CORS_ORIGINS`，在 Hub「设置 → 高级 / 开发者选项」配置本地服务地址即可。浏览器直接读取 GitHub Asset 失败时可使用此受限传输路径；Registry 未启动、来源不获允许或文件校验失败时仍安全拒绝安装。
+开发模式仅测试公开 GitHub 安装下载时无需 Discord Client Secret。启动 Registry 后，以其本地根地址构建 Hub。浏览器直接读取 GitHub Release 或 Asset 失败时可使用受限查询和传输路径。Registry 不可达或文件校验失败时仍安全拒绝安装。
 
 ## 文档
 
