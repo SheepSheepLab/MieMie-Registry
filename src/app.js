@@ -17,6 +17,7 @@ const safeEqual = (a, b) => typeof a === 'string' && typeof b === 'string' && Bu
 const jsonScript = value => JSON.stringify(value).replaceAll('<', '\\u003c').replaceAll('>', '\\u003e').replaceAll('&', '\\u0026');
 const catalogPath = path => /^\/api\/catalog(?:\/[^/]+)?$/.test(path);
 const relayPath = path => path === '/api/packages/github/asset' || path === '/api/hub/releases/asset';
+const tavernAccountPath = /^\/api\/(?:auth\/(?:start|complete|exchange|logout)|me|catalog(?:\/[^/]+)?|submissions(?:\/[^/]+(?:\/status)?)?|discord\/verify|github\/preview|avatars\/[^/]+)$/;
 function cookies(header = '') { return Object.fromEntries(header.split(';').map(part => part.trim().split('=')).filter(parts => parts.length === 2)); }
 async function readJSON(req) {
   if (!(req.headers['content-type'] || '').toLowerCase().startsWith('application/json')) fail(415, 'json_required', '仅接受 application/json');
@@ -146,7 +147,8 @@ ${notification}
       browserCallback = path === '/api/auth/callback' && method === 'GET' && (req.headers['sec-fetch-mode'] === 'navigate' || /(?:^|,)\s*text\/html\b/i.test(req.headers.accept || ''));
       const origin = req.headers.origin;
       const requestedMethod = method === 'OPTIONS' ? req.headers['access-control-request-method'] : method;
-      const allowedOrigin = config.allowedOrigins.has(origin);
+      const tauriTavernOrigin = config.tauriTavernOrigins?.has(origin) && tavernAccountPath.test(path);
+      const allowedOrigin = config.allowedOrigins.has(origin) || tauriTavernOrigin;
       const wantsAuthorization = req.headers.authorization !== undefined ||
         (method === 'OPTIONS' && /(?:^|,)\s*authorization\s*(?:,|$)/i.test(req.headers['access-control-request-headers'] || ''));
       const publicCatalog = requestedMethod === 'GET' && catalogPath(path) && !wantsAuthorization;

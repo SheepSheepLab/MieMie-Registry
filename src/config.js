@@ -13,6 +13,9 @@ export function loadConfig(env = process.env) {
   const allowedOrigins = new Set((env.CORS_ORIGINS || 'http://127.0.0.1:8000,http://localhost:8000').split(',').filter(Boolean).map(s => exactOrigin(s.trim(), true)));
   if (production && !allowedOrigins.size) throw new Error('生产 CORS_ORIGINS 必须至少包含一个明确 Origin');
   allowedOrigins.add(publicBaseUrl);
+  const enableTauriTavern = env.ENABLE_TAURITAVERN_ORIGINS ?? 'false';
+  if (!['false', 'true'].includes(enableTauriTavern)) throw new Error('ENABLE_TAURITAVERN_ORIGINS 仅可为 true 或 false');
+  const tauriTavernOrigins = new Set(enableTauriTavern === 'true' ? ['tauri://localhost', 'http://tauri.localhost'] : []);
   const sessionSecret = env.SESSION_SECRET || (production ? '' : randomBytes(32).toString('hex'));
   if (sessionSecret.length < 32 || /\s|replace|placeholder|example/i.test(sessionSecret)) throw new Error('SESSION_SECRET 必须使用至少 32 字符的随机服务端 Secret');
   const clientId = env.DISCORD_CLIENT_ID || '', clientSecret = env.DISCORD_CLIENT_SECRET || '';
@@ -41,5 +44,5 @@ export function loadConfig(env = process.env) {
   if (production && mode !== 'app') throw new Error('生产环境必须使用 GitHub App 认证');
   const githubAuth = {mode, appId: env.GITHUB_APP_ID, installationId: env.GITHUB_APP_INSTALLATION_ID, privateKeyPath: env.GITHUB_APP_PRIVATE_KEY_PATH};
   if (mode === 'app' && (!/^[1-9]\d{0,19}$/.test(githubAuth.appId || '') || !/^[1-9]\d{0,19}$/.test(githubAuth.installationId || '') || !githubAuth.privateKeyPath)) throw new Error('GitHub App 配置不完整');
-  return { githubAuth, production, publicBaseUrl, allowedOrigins, sessionSecret, redirectUri, adminIds, ownerId, sessionTtlMs: ttl * 1000, clientId, clientSecret, databasePath, host, port, trustLoopbackProxy };
+  return { githubAuth, production, publicBaseUrl, allowedOrigins, tauriTavernOrigins, sessionSecret, redirectUri, adminIds, ownerId, sessionTtlMs: ttl * 1000, clientId, clientSecret, databasePath, host, port, trustLoopbackProxy };
 }
