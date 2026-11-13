@@ -60,7 +60,7 @@ test('Hub gateway timeout, caller cancellation and unsafe redirect fail closed',
     await assert.rejects(fixture({fetchImpl:async()=>new Response(null,{status:302,headers:{location:'http://127.0.0.1/'}})}).relay.read({releaseId:20,assetId:31}),e=>e.code==='unsafe_redirect');
   } finally {clearTimeout(keep);}
 });
-test('real HTTP Hub endpoint is anonymous, Origin restricted, binary readable; Extension route stays separate',async t=>{
+test('real HTTP Hub endpoint is anonymous, cross-origin, binary readable; Extension route stays separate',async t=>{
   const origin='http://127.0.0.1:8000',f=fixture();
   const config=loadConfig({NODE_ENV:'test',PUBLIC_BASE_URL:'http://127.0.0.1:8787',CORS_ORIGINS:origin,SESSION_SECRET:'x'.repeat(48),DATABASE_PATH:':memory:'});
   const store=openStore(':memory:');const app=createApp({config,store,hubRelay:f.relay,githubRelay:{read:()=>{throw Error('Wrong gateway');}}});
@@ -68,7 +68,8 @@ test('real HTTP Hub endpoint is anonymous, Origin restricted, binary readable; E
   t.after(async()=>{app.close();server.closeAllConnections();await new Promise(r=>server.close(r));store.close();});
   const url=`http://127.0.0.1:${server.address().port}/api/hub/releases/asset`;
   const post=(o=origin,body={releaseId:20,assetId:31})=>fetch(url,{method:'POST',headers:{'Content-Type':'application/json',...(o?{Origin:o}:{})},body:JSON.stringify(body)});
-  for(const o of [null,'https://evil.invalid'])assert.equal((await post(o)).status,403);
+  for(const o of [null,'null'])assert.equal((await post(o)).status,403);
+  const stranger=await post('https://new-tavern.example');assert.equal(stranger.status,200);assert.equal(stranger.headers.get('access-control-allow-origin'),'*');await stranger.arrayBuffer();
   const pre=await fetch(url,{method:'OPTIONS',headers:{Origin:origin,'Access-Control-Request-Method':'POST','Access-Control-Request-Headers':'content-type'}});assert.equal(pre.status,204);
   const result=await post();assert.equal(result.status,200);assert.equal(result.headers.get('access-control-allow-origin'),origin);assert.deepEqual(Buffer.from(await result.arrayBuffer()),f.bytes);
   assert.equal((await post(origin,{releaseId:20,assetId:31,url:'http://localhost'})).status,400);

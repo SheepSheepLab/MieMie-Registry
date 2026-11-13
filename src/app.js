@@ -7,12 +7,16 @@ import { randomBytes, randomUUID, createHash, createHmac, timingSafeEqual } from
 import { fail, plain, text, submissionInput, discordLocation, productDistribution } from './validation.js';
 import { createDiscordAdapter, createGitHubAdapter } from './remote.js';
 import { createGitHubRelay, createHubReleaseRelay } from './github-relay.js';
+import { isGitHubReleaseRead, readGitHubRelease } from './github-release-read.js';
+import { requestIP } from './request-ip.js';
 import {rolesFor,validateProduct,handleGovernance} from './governance.js';
 import {adminPage,adminScript,adminStyle} from './admin.js';
 const random = () => randomBytes(32).toString('base64url');
 const sha = value => createHash('sha256').update(value).digest('base64url');
 const safeEqual = (a, b) => typeof a === 'string' && typeof b === 'string' && Buffer.byteLength(a) === Buffer.byteLength(b) && timingSafeEqual(Buffer.from(a), Buffer.from(b));
 const jsonScript = value => JSON.stringify(value).replaceAll('<', '\\u003c').replaceAll('>', '\\u003e').replaceAll('&', '\\u0026');
+const catalogPath = path => /^\/api\/catalog(?:\/[^/]+)?$/.test(path);
+const relayPath = path => path === '/api/packages/github/asset' || path === '/api/hub/releases/asset';
 function cookies(header = '') { return Object.fromEntries(header.split(';').map(part => part.trim().split('=')).filter(parts => parts.length === 2)); }
 async function readJSON(req) {
   if (!(req.headers['content-type'] || '').toLowerCase().startsWith('application/json')) fail(415, 'json_required', '仅接受 application/json');
@@ -138,17 +142,43 @@ ${notification}
     res.setHeader('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'");
     if (config.production) res.setHeader('Strict-Transport-Security', 'max-age=31536000');
     try {
-      prune(); limit(`ip:${req.socket.remoteAddress || 'unknown'}`);
       const requestUrl = new URL(req.url, config.publicBaseUrl), path = requestUrl.pathname, method = req.method;
       browserCallback = path === '/api/auth/callback' && method === 'GET' && (req.headers['sec-fetch-mode'] === 'navigate' || /(?:^|,)\s*text\/html\b/i.test(req.headers.accept || ''));
       const origin = req.headers.origin;
-      if (origin) {
-        if (!config.allowedOrigins.has(origin)) fail(403, 'origin_denied', '此页面来源未获 Registry 允许');
-        res.setHeader('Access-Control-Allow-Origin', origin); res.setHeader('Vary', 'Origin');
+      const requestedMethod = method === 'OPTIONS' ? req.headers['access-control-request-method'] : method;
+      const allowedOrigin = config.allowedOrigins.has(origin);
+      const wantsAuthorization = req.headers.authorization !== undefined ||
+        (method === 'OPTIONS' && /(?:^|,)\s*authorization\s*(?:,|$)/i.test(req.headers['access-control-request-headers'] || ''));
+      const publicCatalog = requestedMethod === 'GET' && catalogPath(path) && !wantsAuthorization;
+      const publicRelease = requestedMethod === 'GET' && isGitHubReleaseRead(path);
+      const publicAsset = requestedMethod === 'POST' && relayPath(path);
+      const publicRequest = !wantsAuthorization && (publicCatalog || publicRelease || publicAsset);
+      // Anonymous endpoints share only public data. Authenticated Catalog reads
+      // and all account/governance operations still require the configured origin.
+      if (origin || catalogPath(path)) res.setHeader('Vary', 'Origin');
+      if (catalogPath(path)) res.setHeader('Vary', 'Origin, Authorization');
+      if (origin && allowedOrigin) res.setHeader('Access-Control-Allow-Origin', origin);
+      else if (origin && origin !== 'null' && publicRequest) res.setHeader('Access-Control-Allow-Origin', '*');
+      else if (origin) fail(403, 'origin_denied', '此页面来源未获 Registry 允许');
+      const ip = requestIP(req, config);
+      prune(); limit(`ip:${ip}`);
+      if ((publicRelease || publicAsset) && wantsAuthorization) fail(400, 'unexpected_credentials', '公开下载接口不接受登录令牌');
+      if (method === 'OPTIONS') {
+        if (!origin) fail(403, 'origin_required', '跨域预检需要页面来源');
+        res.setHeader('Access-Control-Allow-Methods', allowedOrigin ? 'GET, POST, PATCH, OPTIONS' : requestedMethod);
+        res.setHeader('Access-Control-Allow-Headers', allowedOrigin ? 'Authorization, Content-Type' : 'Content-Type');
+        res.setHeader('Access-Control-Max-Age', '600'); res.writeHead(204); res.end(); return;
       }
-      if (method === 'OPTIONS') { res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, OPTIONS'); res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type'); res.setHeader('Access-Control-Max-Age', '600'); res.writeHead(204); res.end(); return; }
       if (!['GET', 'POST', 'PATCH'].includes(method)) fail(405, 'method_not_allowed', '不支持此请求');
-      if (method !== 'GET' && (!origin || !config.allowedOrigins.has(origin))) fail(403, 'origin_required', '写入请求必须来自已配置页面');
+      if (method !== 'GET' && !allowedOrigin && !(origin && publicRequest)) fail(403, 'origin_required', '写入请求必须来自已配置页面');
+      if (publicRelease) {
+        limit(`release-read:${ip}`, 60);
+        const controller = new AbortController();
+        const cancel = () => controller.abort();
+        res.once('close',cancel);
+        try {return send(res,200,await readGitHubRelease(githubClient,requestUrl,controller.signal));}
+        finally {res.off('close',cancel);}
+      }
       if (path === '/health' && method === 'GET') {if(store.db.prepare('PRAGMA user_version').get().user_version!==5)throw Error('schema');store.db.prepare('SELECT id FROM submissions LIMIT 1').get();return send(res, 200, { status: 'ok', version: REGISTRY_VERSION, githubUpstream: githubClient.status().state });}
       if(path==='/admin'&&method==='GET') {
         res.setHeader('Content-Security-Policy',"default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'");
@@ -159,7 +189,7 @@ ${notification}
       if (path === '/' && method === 'GET') { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); res.end('<!doctype html><meta charset="utf-8"><title>MieMie Registry</title><h1>MieMie Registry</h1><p>目录和 Discord 投稿服务。请从 MieMie Hub 扩展中心连接。</p><p>投稿默认上架，不代表安全审核或作者认证。</p>'); return; }
       if (path === '/api/auth/start' && method === 'POST') {
         if (!config.clientId || !config.clientSecret) fail(503, 'oauth_not_configured', 'Registry 尚未配置 Discord OAuth');
-        limit(`auth:${req.socket.remoteAddress}`, 10, 600000);
+        limit(`auth:${ip}`, 10, 600000);
         const body = await readJSON(req);
         if (body.returnOrigin !== origin || !/^[A-Za-z0-9_-]{43}$/.test(body.codeChallenge || '')) fail(400, 'invalid_auth_request', 'OAuth 来源或校验码无效');
         if (flows.size >= 1000 || handoffs.size >= 1000) fail(503, 'busy', '登录请求过多');
@@ -246,9 +276,8 @@ ${notification}
         if (!row || row.owner_status !== 'listed' || row.moderation !== 'visible' || (row.visibility !== 'public' && !permittedGuilds.includes(row.visibility_guild_id))) fail(404, 'not_found', '项目不存在');
         return send(res, 200, store.entryDTO(row));
       }
-      if (['/api/packages/github/asset', '/api/hub/releases/asset'].includes(path) && method === 'POST') {
+      if (publicAsset) {
         if (requestUrl.search) fail(400, 'invalid_relay_request', '文件传输接口不接受 URL 查询参数');
-        const ip = req.socket.remoteAddress || 'unknown';
         limit(`relay:${ip}`, 12, 60000);
         if (relayRequests.size >= 4 || [...relayRequests.values()].filter(value => value === ip).length >= 2) fail(429, 'relay_busy', '文件传输任务过多，请稍后重试');
         const body = await readJSON(req), controller = new AbortController(), cancel = () => controller.abort();

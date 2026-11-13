@@ -3,7 +3,7 @@ import {createGitHubClient} from '../src/github-client.js';
 // Development Fixture / Test Data: fake application values, no external OAuth.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createServer } from 'node:http';
+import { createServer, request } from 'node:http';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { mkdtemp, readFile, rm, stat, access } from 'node:fs/promises';
@@ -13,6 +13,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { loadConfig } from '../src/config.js';
 import { openStore } from '../src/store.js';
 import { createApp } from '../src/app.js';
+import { requestIP } from '../src/request-ip.js';
 import { backupDatabase } from '../tools/sqlite-backup.mjs';
 const root = new URL('../', import.meta.url).pathname;
 const production = { GITHUB_AUTH_MODE: 'app', GITHUB_APP_ID: '1', GITHUB_APP_INSTALLATION_ID: '2', GITHUB_APP_PRIVATE_KEY_PATH: '/external/test-key.pem', NODE_ENV: 'production', PUBLIC_BASE_URL: 'https://registry.miemie-fixture.org', CORS_ORIGINS: 'http://127.0.0.1:8000', DISCORD_CLIENT_ID: '000000000000000001', DISCORD_CLIENT_SECRET: 'development-fixture-not-a-real-client-secret', SESSION_SECRET: 'development-fixture-not-a-real-session-secret' };
@@ -43,6 +44,72 @@ test('production supports exact local Tavern origins and privately configured ad
 test('development public catalog can run without invented Discord credentials', () => {
   const config = loadConfig({}); assert.equal(config.production, false); assert.equal(config.clientId, ''); assert.equal(config.clientSecret, '');
   assert.equal(config.publicBaseUrl, 'http://127.0.0.1:8787'); assert.ok(config.sessionSecret.length >= 32);
+});
+test('proxy rate-limit identity is opt-in and accepts one valid IP only from the configured loopback peer', () => {
+  const config = loadConfig({TRUST_LOOPBACK_PROXY:'true'});
+  for (const host of ['0.0.0.0', '::', 'localhost', '192.0.2.1']) {
+    assert.throws(() => loadConfig({TRUST_LOOPBACK_PROXY:'true', HOST:host}));
+  }
+  assert.throws(() => loadConfig({TRUST_LOOPBACK_PROXY:'yes'}));
+  const ip = (peer, headers, settings = config) => requestIP({socket:{remoteAddress:peer}, headers}, settings);
+  assert.equal(ip('127.0.0.1', {'x-miemie-client-ip':'192.0.2.7'}), '192.0.2.7');
+  assert.equal(ip('127.0.0.1', {'x-miemie-client-ip':'::FFFF:c000:0207'}), '192.0.2.7');
+  assert.equal(ip('::1', {'x-miemie-client-ip':'2001:0db8::2'}, loadConfig({TRUST_LOOPBACK_PROXY:'true', HOST:'::1'})), '2001:db8::2');
+  assert.equal(ip('198.51.100.1', {'x-miemie-client-ip':'192.0.2.7'}), '198.51.100.1');
+  assert.equal(ip('127.0.0.1', {'x-miemie-client-ip':'192.0.2.7'}, loadConfig({})), '127.0.0.1');
+  for (const invalid of ['192.0.2.7, 192.0.2.8', '192.0.2.7:80', 'host.test', 'fe80::1%eth0']) {
+    assert.equal(ip('127.0.0.1', {'x-miemie-client-ip':invalid}), '127.0.0.1');
+  }
+  assert.equal(ip('127.0.0.1', {'x-forwarded-for':'192.0.2.7'}), '127.0.0.1');
+});
+test('public downloads behind a loopback proxy enforce per-client limits and ignore spoofed forwarding headers', async t => {
+  const config = loadConfig({TRUST_LOOPBACK_PROXY:'true'}), store = openStore(':memory:');
+  const app = createApp({config, store, githubRelay:{read:async () => Buffer.from('fixture')}});
+  const backend = createServer(app.handler);
+  const listen = server => new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  await listen(backend);
+  const proxy = createServer((req, res) => {
+    // Reproduce the documented Caddy header overwrite with two edge peers.
+    const upstream = request({host:'127.0.0.1', port:backend.address().port, method:req.method, path:req.url,
+      headers:{...req.headers, 'x-miemie-client-ip':req.socket.remoteAddress}}, response => {
+      res.writeHead(response.statusCode, response.headers);
+      response.pipe(res);
+    });
+    req.pipe(upstream);
+  });
+  await listen(proxy);
+  t.after(async () => {
+    app.close();
+    for (const server of [proxy, backend]) {
+      server.closeAllConnections();
+      await new Promise(resolve => server.close(resolve));
+    }
+    store.close();
+  });
+  const transfer = (localAddress, spoofed) => new Promise((resolve, reject) => {
+    const req = request({host:'127.0.0.1', port:proxy.address().port, localAddress, method:'POST', path:'/api/packages/github/asset',
+      headers:{Origin:'https://new-tavern.example', 'Content-Type':'application/json',
+        'X-MieMie-Client-IP':spoofed, 'X-Forwarded-For':spoofed}}, response => {
+      response.resume();
+      response.on('end', () => resolve(response.statusCode));
+    });
+    req.on('error', reject);
+    req.end('{}');
+  });
+  // macOS only binds configured loopback addresses. An IPv6 listener supplies
+  // the second peer portably without adding an alias to the host network.
+  const secondProxy = createServer(proxy.listeners('request')[0]);
+  await new Promise(resolve => secondProxy.listen(0, '::1', resolve));
+  t.after(async () => {
+    secondProxy.closeAllConnections();
+    await new Promise(resolve => secondProxy.close(resolve));
+  });
+  for (let i = 0; i < 12; i++) assert.equal(await transfer('127.0.0.1', '192.0.2.1'), 200);
+  assert.equal(await transfer('127.0.0.1', '192.0.2.2'), 429);
+  const second = await fetch(`http://[::1]:${secondProxy.address().port}/api/packages/github/asset`, {method:'POST',
+    headers:{Origin:'https://new-tavern.example', 'Content-Type':'application/json', 'X-MieMie-Client-IP':'127.0.0.1'}, body:'{}'});
+  assert.equal(second.status, 200);
+  await second.arrayBuffer();
 });
 test('production OAuth flow cookie is HttpOnly Secure SameSite=Lax and uses only identify guilds', async t => {
   const config = loadConfig(production), store = openStore(':memory:'), app = createApp({ config, store, githubClient: createGitHubClient() });

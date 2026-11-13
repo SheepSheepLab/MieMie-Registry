@@ -63,7 +63,7 @@ test('browser callback can be refreshed or replayed without displaying JSON or e
 test('bridge expires independently and is origin-bound',async t=>{const f=await fixture(t),flow=await f.begin(),cb=await f.callback(flow),bridge=JSON.parse(cb.data.match(/postMessage\((\{.*?\}),/)[1]);assert.equal((await f.req('/api/auth/exchange',{method:'POST',origin:'http://127.0.0.1:8000',body:{...bridge,codeVerifier:flow.verifier}})).status,400);f.advance(60001);assert.equal((await f.req('/api/auth/exchange',{method:'POST',body:{...bridge,codeVerifier:flow.verifier}})).status,400);});
 test('successful login contains only public profile and Registry opaque token',async t=>{const f=await fixture(t),login=await f.login();assert.equal(login.profile.displayName,'Development Fixture A');assert.equal(login.token.length,43);assert.equal(login.isAdmin,false);assert.equal(JSON.stringify(login.profile).includes(IDS.A),false);const row=f.store.db.prepare('SELECT * FROM sessions').get();assert.notEqual(row.hash,login.token);assert.equal(row.discord_id,IDS.A);});
 test('sessions are bound to original origin, expire, and logout revokes',async t=>{const f=await fixture(t),a=await f.login();assert.equal((await f.req('/api/me',{token:a.token,origin:'http://127.0.0.1:8000'})).status,401);assert.equal((await f.req('/api/auth/logout',{method:'POST',token:a.token,body:{}})).status,200);assert.equal((await f.req('/api/me',{token:a.token})).status,401);const b=await f.login();f.advance(28800001);assert.equal((await f.req('/api/me',{token:b.token})).status,401);});
-test('CORS and bearer-session CSRF protection reject missing, evil and null origins',async t=>{const f=await fixture(t),a=await f.login();for(const origin of [null,'https://evil.example','null'])assert.equal((await f.req('/api/submissions',{method:'POST',token:a.token,body:submission(),origin})).status,403);assert.equal((await f.req('/api/catalog',{origin:'https://evil.example'})).status,403);assert.equal((await f.req('/api/catalog',{origin:ORIGIN})).headers.get('access-control-allow-origin'),ORIGIN);});
+test('CORS and bearer-session CSRF protection reject missing, evil and null origins',async t=>{const f=await fixture(t),a=await f.login();for(const origin of [null,'https://evil.example','null'])assert.equal((await f.req('/api/submissions',{method:'POST',token:a.token,body:submission(),origin})).status,403);assert.equal((await f.req('/api/catalog',{origin:'https://evil.example',token:a.token})).status,403);assert.equal((await f.req('/api/catalog',{origin:ORIGIN})).headers.get('access-control-allow-origin'),ORIGIN);});
 test('identity primary key and submission ownership survive profile changes',async t=>{const f=await fixture(t),a=await f.login(),created=await f.req('/api/submissions',{method:'POST',token:a.token,body:submission()});assert.equal(created.status,201);const id=created.data.id;f.profiles.A={...f.profiles.A,displayName:'Changed Display',username:'changed_username',avatarBytes:Buffer.from([137,80,78,71,13,10,26,10])};const again=await f.login();assert.equal(again.profile.displayName,'Changed Display');assert.ok(again.profile.avatarUrl.startsWith('/api/avatars/'));assert.ok(!again.profile.avatarUrl.includes(IDS.A));assert.equal((await f.req(again.profile.avatarUrl)).headers.get('content-type'),'image/png');assert.equal((await f.req('/api/submissions',{token:again.token})).data.items[0].id,id);assert.equal(f.store.db.prepare('SELECT count(*) AS n FROM identities').get().n,1);assert.equal((await f.req('/api/catalog')).data.items[0].submitter.displayName,'Changed Display');});
 test('author and submitter distinct; B cannot edit or unlist A submission',async t=>{const f=await fixture(t),a=await f.login(),b=await f.login('B');const created=(await f.req('/api/submissions',{method:'POST',token:a.token,body:submission({author:'Actual Work Author'})})).data;assert.equal(created.author,'Actual Work Author');assert.equal(created.submitter.displayName,'Development Fixture A');assert.equal((await f.req('/api/submissions',{token:b.token})).data.items.length,0);assert.equal((await f.req(`/api/submissions/${created.id}`,{method:'PATCH',token:b.token,body:{name:'stolen'}})).status,404);assert.equal((await f.req(`/api/submissions/${created.id}/status`,{method:'POST',token:b.token,body:{status:'unlisted'}})).status,404);});
 test('owner cannot change owner identity or internal discovery fields',async t=>{const f=await fixture(t),a=await f.login(),created=(await f.req('/api/submissions',{method:'POST',token:a.token,body:submission()})).data;for(const field of ['ownerDiscordUserId','owner_id','github','status','id'])assert.equal((await f.req(`/api/submissions/${created.id}`,{method:'PATCH',token:a.token,body:{[field]:IDS.B}})).status,400);});
@@ -107,6 +107,55 @@ test('membership is revalidated for every Catalog request; leaving guild revokes
 test('Discord membership failure fails closed without leaking upstream body or cached private rows',async t=>{const f=await fixture(t),a=await f.login(),row=(await f.req('/api/submissions',{method:'POST',token:a.token,body:restricted()})).data;await f.req('/api/catalog',{token:a.token});f.setMembershipFailure(true);for(const path of ['/api/catalog',`/api/catalog/${row.id}`]){const result=await f.req(path,{token:a.token});assert.equal(result.status,503);assert.equal(result.data.error.code,'membership_unavailable');assert.ok(!JSON.stringify(result.data).includes('private-upstream-details'));assert.ok(!JSON.stringify(result.data).includes(row.name));}assert.equal((await f.req('/api/catalog')).data.total,0);});
 test('create rejects nonmember restriction and client-supplied guild/ownership identifiers',async t=>{const f=await fixture(t),b=await f.login('B');assert.equal((await f.req('/api/submissions',{method:'POST',token:b.token,body:restricted()})).status,403);for(const field of ['visibilityGuildId','guildIds','guildId','ownerDiscordUserId']){assert.equal((await f.req('/api/submissions',{method:'POST',token:b.token,body:restricted({[field]:GUILD})})).status,400);}assert.equal((await f.req('/api/catalog')).data.total,0);});
 test('default visibility is public and public creation does not require membership lookup',async t=>{const f=await fixture(t),b=await f.login('B');f.setMembershipFailure(true);const result=await f.req('/api/submissions',{method:'POST',token:b.token,body:submission({visibility:undefined})});assert.equal(result.status,201);assert.equal(result.data.visibility,'public');assert.equal(f.membershipCalls.length,0);assert.equal((await f.req('/api/catalog')).data.total,1);});
+test('unlisted Tavern origins can read public catalog entries without gaining account or guild access',async t=>{
+  const f=await fixture(t),a=await f.login();
+  const publish=body=>f.req('/api/submissions',{method:'POST',token:a.token,body});
+  const publicRow=(await publish(submission())).data;
+  const privateRow=(await publish(restricted())).data;
+  for(const origin of ['http://127.0.0.1:48216','https://custom-tavern.example']){
+    const catalog=await f.req('/api/catalog',{origin});
+    assert.equal(catalog.status,200);
+    assert.equal(catalog.headers.get('access-control-allow-origin'),'*');
+    assert.equal(catalog.headers.get('access-control-allow-credentials'),null);
+    assert.deepEqual(catalog.data.items.map(item=>item.id),[publicRow.id]);
+    assert.equal((await f.req('/api/catalog/'+publicRow.id,{origin})).status,200);
+    assert.equal((await f.req('/api/catalog/'+privateRow.id,{origin})).status,404);
+    assert.equal((await f.req('/api/catalog',{origin,token:a.token})).status,403);
+    assert.equal((await f.req('/api/auth/start',{origin,method:'POST',body:{}})).status,403);
+    assert.equal((await f.req('/api/submissions',{origin,method:'POST',body:submission()})).status,403);
+    assert.equal((await f.req('/api/admin/github-upstream',{origin})).status,403);
+  }
+  assert.equal((await f.req('/api/catalog',{origin:'null'})).status,403);
+});
+
+test('public GitHub lookup exposes bounded release fields and refuses private or draft records',async t=>{
+  const base='https://api.github.com/repos/Owner/Tool', calls=[];
+  let privateRepo=false;
+  const read=async url=>{
+    calls.push(url);
+    const data=url===base?{private:privateRepo,full_name:'Owner/Tool',secret:'do not serialize'}:
+      url.includes('?')?[{id:7,draft:false,tag_name:'v1.0.0',body:'ignored'},{id:8,draft:true,tag_name:'v2.0.0'}]:
+      {id:7,draft:url.endsWith('/8'),tag_name:'v1.0.0',assets:[{id:9,name:'metadata.json',label:'ignored'}]};
+    return {bytes:Buffer.from(JSON.stringify(data))};
+  };
+  const f=await fixture(t,{app:{githubClient:{read,close(){}}}});
+  const origin='https://custom-tavern.example', route='/api/github/repos/Owner/Tool';
+  assert.deepEqual((await f.req(route,{origin})).data,{private:false,full_name:'Owner/Tool'});
+  const list=await f.req(route+'/releases?per_page=100&page=1',{origin});
+  assert.equal(list.headers.get('access-control-allow-origin'),'*');
+  assert.deepEqual(list.data,[{id:7,draft:false,tag_name:'v1.0.0'},{draft:true}]);
+  const release=await f.req(route+'/releases/tags/v1.0.0',{origin});
+  assert.deepEqual(release.data.assets,[{id:9,name:'metadata.json'}]);
+  assert.equal((await f.req(route+'/releases/8',{origin})).status,404);
+  calls.length=0;
+  assert.equal((await f.req(route+'/releases?per_page=100&page=11',{origin})).status,400);
+  assert.equal((await f.req(route+'/releases/assets/9',{origin})).status,403);
+  assert.equal((await f.req(route+'?url=https://elsewhere.example',{origin})).status,400);
+  assert.equal(calls.length,0);
+  privateRepo=true;
+  assert.equal((await f.req(route+'/releases/7',{origin})).status,404);
+  assert.deepEqual(calls,[base]);
+});
 test('GitHub projects support same Guild ACL using verified Discord community link without changing repository ownership',async t=>{const f=await fixture(t),a=await f.login(),saved=await f.req('/api/submissions',{method:'POST',token:a.token,body:submission({visibility:'discord_guild',visibilitySourceUrl:post()})});assert.equal(saved.status,201);assert.equal(saved.data.sourceType,'github');assert.equal(saved.data.visibilitySourceUrl,post());assert.equal((await f.req('/api/catalog')).data.total,0);assert.equal((await f.req('/api/catalog',{token:a.token})).data.total,1);assert.equal((await f.req('/api/submissions',{method:'POST',token:a.token,body:submission({sourceUrl:'https://github.com/example/other',visibility:'discord_guild',visibilitySourceUrl:'https://discord.gg/invite'})})).status,400);});
 test('editing Discord source or public visibility must revalidate new Guild and discard previous anchor',async t=>{const f=await fixture(t),a=await f.login(),saved=(await f.req('/api/submissions',{method:'POST',token:a.token,body:restricted()})).data;const edit=body=>f.req(`/api/submissions/${saved.id}`,{method:'PATCH',token:a.token,body});assert.equal((await edit({sourceUrl:post(OTHER_GUILD)})).status,403);assert.equal(f.store.getEntry(saved.id).visibility_guild_id,GUILD);f.memberships.A=[OTHER_GUILD];assert.equal((await edit({sourceUrl:post(OTHER_GUILD)})).status,200);assert.equal(f.store.getEntry(saved.id).visibility_guild_id,OTHER_GUILD);assert.equal((await edit({visibility:'public'})).status,200);assert.equal(f.store.getEntry(saved.id).visibility_guild_id,OTHER_GUILD);f.memberships.A=[];assert.equal((await edit({visibility:'discord_guild'})).status,403);assert.equal(f.store.getEntry(saved.id).visibility,'discord_guild');});
 test('Github repository change clears old discovery and forces revalidation even when other source was previewed',async t=>{const f=await fixture(t),a=await f.login(),saved=(await f.req('/api/submissions',{method:'POST',token:a.token,body:submission()})).data;await f.req('/api/github/preview?url=https://github.com/example/second',{token:a.token});const before=f.inspections.length;const changed=await f.req(`/api/submissions/${saved.id}`,{method:'PATCH',token:a.token,body:{sourceUrl:'https://github.com/example/second'}});assert.equal(changed.status,200);assert.equal(f.inspections.length,before+1);assert.equal(changed.data.github.repo,'second');});

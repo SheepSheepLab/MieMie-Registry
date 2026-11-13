@@ -27,6 +27,13 @@ export function loadConfig(env = process.env) {
   if (!Number.isSafeInteger(ttl) || ttl < 60 || ttl > 86400) throw new Error('Session TTL 必须介于 60 与 86400 秒');
   const port = Number(env.PORT || 8787);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('PORT 无效');
+  const host = env.HOST || '127.0.0.1';
+  const proxyMode = env.TRUST_LOOPBACK_PROXY || 'false';
+  if (!['false', 'true'].includes(proxyMode)) throw new Error('TRUST_LOOPBACK_PROXY 必须为 true 或 false');
+  const trustLoopbackProxy = proxyMode === 'true';
+  if (trustLoopbackProxy && !['127.0.0.1', '::1'].includes(host)) {
+    throw new Error('TRUST_LOOPBACK_PROXY 仅可用于明确绑定回环地址的 Registry');
+  }
   const databasePath = env.DATABASE_PATH || './data/registry.sqlite';
   if (production && databasePath === ':memory:') throw new Error('生产环境必须使用持久 SQLite 文件');
   const mode = env.GITHUB_AUTH_MODE || (production ? 'app' : 'anonymous');
@@ -34,5 +41,5 @@ export function loadConfig(env = process.env) {
   if (production && mode !== 'app') throw new Error('生产环境必须使用 GitHub App 认证');
   const githubAuth = {mode, appId: env.GITHUB_APP_ID, installationId: env.GITHUB_APP_INSTALLATION_ID, privateKeyPath: env.GITHUB_APP_PRIVATE_KEY_PATH};
   if (mode === 'app' && (!/^[1-9]\d{0,19}$/.test(githubAuth.appId || '') || !/^[1-9]\d{0,19}$/.test(githubAuth.installationId || '') || !githubAuth.privateKeyPath)) throw new Error('GitHub App 配置不完整');
-  return { githubAuth, production, publicBaseUrl, allowedOrigins, sessionSecret, redirectUri, adminIds, ownerId, sessionTtlMs: ttl * 1000, clientId, clientSecret, databasePath, host: env.HOST || '127.0.0.1', port };
+  return { githubAuth, production, publicBaseUrl, allowedOrigins, sessionSecret, redirectUri, adminIds, ownerId, sessionTtlMs: ttl * 1000, clientId, clientSecret, databasePath, host, port, trustLoopbackProxy };
 }
