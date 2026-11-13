@@ -64,6 +64,38 @@ test('bridge expires independently and is origin-bound',async t=>{const f=await 
 test('successful login contains only public profile and Registry opaque token',async t=>{const f=await fixture(t),login=await f.login();assert.equal(login.profile.displayName,'Development Fixture A');assert.equal(login.token.length,43);assert.equal(login.isAdmin,false);assert.equal(JSON.stringify(login.profile).includes(IDS.A),false);const row=f.store.db.prepare('SELECT * FROM sessions').get();assert.notEqual(row.hash,login.token);assert.equal(row.discord_id,IDS.A);});
 test('sessions are bound to original origin, expire, and logout revokes',async t=>{const f=await fixture(t),a=await f.login();assert.equal((await f.req('/api/me',{token:a.token,origin:'http://127.0.0.1:8000'})).status,401);assert.equal((await f.req('/api/auth/logout',{method:'POST',token:a.token,body:{}})).status,200);assert.equal((await f.req('/api/me',{token:a.token})).status,401);const b=await f.login();f.advance(28800001);assert.equal((await f.req('/api/me',{token:b.token})).status,401);});
 test('CORS and bearer-session CSRF protection reject missing, evil and null origins',async t=>{const f=await fixture(t),a=await f.login();for(const origin of [null,'https://evil.example','null'])assert.equal((await f.req('/api/submissions',{method:'POST',token:a.token,body:submission(),origin})).status,403);assert.equal((await f.req('/api/catalog',{origin:'https://evil.example',token:a.token})).status,403);assert.equal((await f.req('/api/catalog',{origin:ORIGIN})).headers.get('access-control-allow-origin'),ORIGIN);});
+test('TT origin support is opt-in, exact, and limited to Tavern endpoints',async t=>{
+ const ordinary=await fixture(t),f=await fixture(t,{env:{ENABLE_TAURITAVERN_ORIGINS:'true'}});
+ const preflight=(fixture,origin,path='/api/auth/start',method='POST')=>fixture.req(path,{origin,method:'OPTIONS',headers:{'Access-Control-Request-Method':method,'Access-Control-Request-Headers':'content-type'}});
+ const verifier='v'.repeat(43),startBody=origin=>({returnOrigin:origin,codeChallenge:challenge(verifier)});
+ for(const origin of ['tauri://localhost','http://tauri.localhost']){
+  assert.equal((await preflight(ordinary,origin)).status,403);
+  const pre=await preflight(f,origin);
+  assert.equal(pre.status,204);assert.equal(pre.headers.get('access-control-allow-origin'),origin);
+  assert.equal((await preflight(f,origin,'/api/admin/github-upstream','GET')).status,403);
+  assert.equal((await f.req('/admin',{origin})).status,403);
+  const start=await f.req('/api/auth/start',{method:'POST',origin,body:startBody(origin)});
+  assert.equal(start.status,200);
+  const auth=await f.req('/api/auth/authorize?requestId='+start.data.requestId,{origin:null});
+  assert.equal(auth.status,302);
+  const state=new URL(auth.headers.get('location')).searchParams.get('state');
+  const callback=await f.callback({state,cookie:auth.headers.get('set-cookie').split(';')[0]},'ADMIN');
+  assert.equal(callback.status,200);
+  const complete=(source,codeVerifier=verifier)=>f.req('/api/auth/complete',{method:'POST',origin:source,body:{requestId:start.data.requestId,codeVerifier}});
+  assert.equal((await complete(ORIGIN)).status,400);
+  assert.equal((await complete(origin,'x'.repeat(43))).status,400);
+  const session=await complete(origin);
+  assert.equal(session.status,200);assert.equal(session.data.isAdmin,true);
+  assert.equal((await f.req('/api/me',{origin,token:session.data.token})).status,200);
+  assert.equal((await f.req('/api/catalog',{origin,token:session.data.token})).status,200);
+  assert.equal((await f.req('/api/admin/github-upstream',{origin,token:session.data.token})).status,403);
+  assert.equal((await f.req('/api/me',{origin:ORIGIN,token:session.data.token})).status,401);
+  assert.equal((await complete(origin)).status,400);
+ }
+ for(const origin of ['null','https://tauri.localhost','http://tauri.localhost:8000','tauri://other.localhost'])assert.equal((await preflight(f,origin)).status,403);
+ assert.throws(()=>loadConfig({ENABLE_TAURITAVERN_ORIGINS:'*'}));
+ assert.throws(()=>loadConfig({CORS_ORIGINS:'tauri://localhost'}));
+});
 test('identity primary key and submission ownership survive profile changes',async t=>{const f=await fixture(t),a=await f.login(),created=await f.req('/api/submissions',{method:'POST',token:a.token,body:submission()});assert.equal(created.status,201);const id=created.data.id;f.profiles.A={...f.profiles.A,displayName:'Changed Display',username:'changed_username',avatarBytes:Buffer.from([137,80,78,71,13,10,26,10])};const again=await f.login();assert.equal(again.profile.displayName,'Changed Display');assert.ok(again.profile.avatarUrl.startsWith('/api/avatars/'));assert.ok(!again.profile.avatarUrl.includes(IDS.A));assert.equal((await f.req(again.profile.avatarUrl)).headers.get('content-type'),'image/png');assert.equal((await f.req('/api/submissions',{token:again.token})).data.items[0].id,id);assert.equal(f.store.db.prepare('SELECT count(*) AS n FROM identities').get().n,1);assert.equal((await f.req('/api/catalog')).data.items[0].submitter.displayName,'Changed Display');});
 test('author and submitter distinct; B cannot edit or unlist A submission',async t=>{const f=await fixture(t),a=await f.login(),b=await f.login('B');const created=(await f.req('/api/submissions',{method:'POST',token:a.token,body:submission({author:'Actual Work Author'})})).data;assert.equal(created.author,'Actual Work Author');assert.equal(created.submitter.displayName,'Development Fixture A');assert.equal((await f.req('/api/submissions',{token:b.token})).data.items.length,0);assert.equal((await f.req(`/api/submissions/${created.id}`,{method:'PATCH',token:b.token,body:{name:'stolen'}})).status,404);assert.equal((await f.req(`/api/submissions/${created.id}/status`,{method:'POST',token:b.token,body:{status:'unlisted'}})).status,404);});
 test('owner cannot change owner identity or internal discovery fields',async t=>{const f=await fixture(t),a=await f.login(),created=(await f.req('/api/submissions',{method:'POST',token:a.token,body:submission()})).data;for(const field of ['ownerDiscordUserId','owner_id','github','status','id'])assert.equal((await f.req(`/api/submissions/${created.id}`,{method:'PATCH',token:a.token,body:{[field]:IDS.B}})).status,400);});

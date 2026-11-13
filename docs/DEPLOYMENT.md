@@ -17,6 +17,7 @@ Registry 可以独立运行，无需 Hub／Polisher 源码目录；没有云厂�
 | HOST / PORT | 默认 127.0.0.1 / 8787，按反向代理部署调整 |
 | PUBLIC_BASE_URL | Registry 的精确 HTTPS Origin，本机开发可 HTTP |
 | CORS_ORIGINS | 逗号分隔精确 Tavern Origins，不使用 `*`；不含路径 |
+| ENABLE_TAURITAVERN_ORIGINS | 默认 false；启用后仅向 `tauri://localhost` 和 `http://tauri.localhost` 开放 Hub 登录、登录后的目录和投稿相关接口 |
 | DATABASE_PATH | SQLite 路径，默认 ./data/registry.sqlite；生产必须挂载持久磁盘 |
 | BACKUP_DIRECTORY | 一致性备份目录，默认 ./backups；备份也是私有身份数据 |
 | DISCORD_CLIENT_ID | Discord 应用的公开 Client ID，存服务端即可 |
@@ -82,6 +83,8 @@ docker compose exec -T registry node tools/backup.mjs
 7. 测试显示名／头像修改后重新登录，确认 Profile 更新、旧投稿所有权保留。
 
 生产 OAuth 浏览器绑定 Cookie 为 `HttpOnly; Secure; SameSite=Lax`，只用于 popup 回调并在使用后清除；它不是第三方 Session Cookie。Hub 后续持有的 Registry 随机会话凭据仅保存在 iframe 内存，不是 Discord Token；Discord access token 只保存在 Registry 内存。关闭／刷新 Hub 或重启 Registry 后需要重新登录。Owner 由私有配置判断，其余角色在数据库中由 Owner 管理，不接受客户端角色参数。
+
+TT 酒馆可在系统默认浏览器完成 Discord 授权，再回到原 Hub 领取登录结果。部署启用 `ENABLE_TAURITAVERN_ORIGINS` 前，核对实际宿主发出的 Origin。该配置继续校验原始 Origin、一次性请求和 verifier。Registry 管理后台仍使用原有访问边界，`Origin: null` 保持拒绝。
 
 实现依据 [Discord 官方 OAuth2 文档](https://discord.com/developers/docs/topics/oauth2)：Authorization Code、一次性 state、服务端令牌交换；`identify` 允许读取 `/users/@me`；`guilds` 允许读取 `/users/@me/guilds`。服务器仅使用 ID 判断成员身份，不把服务器列表或 OAuth Token 发给 Hub。Hub 与 Registry 的 verifier 交接是 Registry 自身的一次性会话桥，不声称 Discord 支持未使用的 PKCE 参数。
 
