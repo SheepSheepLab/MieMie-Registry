@@ -76,8 +76,6 @@ export function submissionInput(body) {
   // Legacy clients may echo this read-only value. The handler rejects changes.
   const classification=Object.hasOwn(body,'classification') ? body.classification : 'community';
   if(!['community','official'].includes(classification))fail(400,'invalid_classification','身份分类无效');
-  const tags = body.tags ?? [];
-  if (!Array.isArray(tags) || tags.length > 8) fail(400, 'invalid_tags', '最多 8 个标签');
   const requestedVisibility = body.visibility ?? 'public';
   if (!['public', 'discord_guild'].includes(requestedVisibility)) fail(400, 'invalid_visibility', '可见范围必须为 public 或 discord_guild');
   const sourceUrl = body.sourceType === 'github' ? githubRepo(body.sourceUrl).url : discordPost(body.sourceUrl);
@@ -96,7 +94,8 @@ export function submissionInput(body) {
     visibilityLocation = body.sourceType === 'discord' ? discord : discordLocation(body.visibilitySourceUrl || discordPostUrl);
     if (body.sourceType === 'discord' && body.visibilitySourceUrl && discordPost(body.visibilitySourceUrl) !== sourceUrl) fail(400, 'invalid_visibility', 'Discord 可见范围必须依据当前原帖');
   }
-  return { discordPostUrl, type, distribution, platforms:[...new Set(platforms)], websiteUrl:website, classification, visibility, visibilityGuildId: visibilityLocation?.guildId || null, visibilitySourceUrl: visibilityLocation?.url || null, discord, name: text(body.name, '名称', 100), description: text(body.description, '简介', 2000), author: text(body.author, '作者', 100), sourceType: body.sourceType, sourceUrl, icon: iconUrl(body.icon), tags: [...new Set(tags.map(tag => text(tag, '标签', 30)))] };
+  const description = body.sourceType === 'discord' ? text(body.description, '简介', 2000) : '';
+  return { discordPostUrl, type, distribution, platforms:[...new Set(platforms)], websiteUrl:website, classification, visibility, visibilityGuildId: visibilityLocation?.guildId || null, visibilitySourceUrl: visibilityLocation?.url || null, discord, name: text(body.name, '名称', 100), description, author: text(body.author, '作者', 100), sourceType: body.sourceType, sourceUrl, icon: iconUrl(body.icon), tags: [] };
 }
 export function version(value) { return typeof value === 'string' && value.trim() === value && /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(value) && value.length < 40; }
 export function compareVersions(a, b) {

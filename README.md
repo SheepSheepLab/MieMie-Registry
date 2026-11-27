@@ -2,7 +2,7 @@
 
 本目录服务属于咩咩（MieMie）开源软件与社区生态，由生态 Founder / 创始人 SheepSheep 发起和创建。SheepSheepLab 是官方 GitHub 开发、维护与发布命名空间，官方项目主要通过该命名空间维护和发布，并欢迎社区贡献者共同参与。
 
-MieMie Extension Ecosystem MVP 的独立目录与 Discord 投稿服务，当前源码版本为 **0.7.2**（支持 Extension API2 Manifest，沿用 HTTP API v1、DB Schema 5 与机器 Schema 1）。软件代码 Copyright © 2026 SheepSheep，采用 [GNU GPL v3.0 or later](LICENSE)，SPDX：`GPL-3.0-or-later`。
+MieMie Extension Ecosystem MVP 的独立目录与 Discord 投稿服务，当前源码版本为 **0.7.4**（支持 Extension API2 Manifest，沿用 HTTP API v1、DB Schema 5 与机器 Schema 1）。软件代码 Copyright © 2026 SheepSheep，采用 [GNU GPL v3.0 or later](LICENSE)，SPDX：`GPL-3.0-or-later`。
 
 社区贡献者（Community Contributors）保留各自的贡献者身份；除另有说明，贡献内容的版权归相应贡献者所有。
 
@@ -13,6 +13,10 @@ Registry 只持久保存目录元数据、Discord 投稿身份和必要管理记
 只有用户主动提交的记录进入 Catalog；仓库预览不会创建投稿，也不预置 Polisher。
 
 Discord 来源仅原帖所在服务器成员可见；GitHub 项目仍可选择公开或 Guild-only，可选 Discord 发布帖与可见范围依据分别保存。受限投稿要求投稿者属于该 Guild；成员验证不代表作者认证。权限使用 Guild ID，不使用服务器名称。
+
+## 0.7.4 发布说明
+
+GitHub 项目的目录简介与简介搜索采用从仓库 About 同步的描述。Discord 项目继续使用投稿简介。新投稿、编辑和目录展示停用自定义标签。现有 HTTP API v1 和 SQLite Schema 5 继续使用。
 
 ## 0.7.2 发布说明
 

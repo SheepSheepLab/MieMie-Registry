@@ -21,6 +21,13 @@ test('release sorting ignores drafts and invalid tags and accepts pre-release fl
 test('bare version tags and newline versions are not install targets',async()=>{const f=remoteFixture({release:{tag_name:'1.0.1'}});assert.equal((await f.adapter.inspect('https://github.com/example/fixture')).release,null);assert.equal(version('1.0.1\n'),false);});
 test('no release still permits manifest prefill but remains external',async()=>{const f=remoteFixture({releases:[]});const result=await f.adapter.inspect('https://github.com/example/fixture');assert.equal(result.release,null);assert.equal(result.compatibility,'external');assert.equal(result.manifest.name,manifest.name);assert.match(result.manifest.iconUrl,/\/HEAD\/assets\/icon.png$/);});
 test('missing manifest and releases still accept ordinary public GitHub project',async()=>{const f=remoteFixture({releases:[],rootManifest:false});const result=await f.adapter.inspect('https://github.com/example/fixture');assert.equal(result.manifest,null);assert.equal(result.compatibility,'external');});
+test('GitHub About is read from repository metadata whether or not the repository has a package',async()=>{
+  const url='https://github.com/example/fixture';
+  const managed=await remoteFixture({repo:{description:'  GitHub About  '}}).adapter.inspect(url);
+  assert.equal(managed.repositoryDescription,'GitHub About');
+  const external=await remoteFixture({repo:{description:null},releases:[],rootManifest:false}).adapter.inspect(url);
+  assert.equal(external.repositoryDescription,'');
+});
 test('missing machine metadata cannot become installable from root manifest',async()=>{const f=remoteFixture({release:{assets:[]}});assert.equal((await f.adapter.inspect('https://github.com/example/fixture')).compatibility,'external');});
 test('private and mismatched repositories are rejected',async()=>{for(const repo of [{private:true},{full_name:'another/repo'}])await assert.rejects(()=>remoteFixture({repo}).adapter.inspect('https://github.com/example/fixture'),/公开且与输入地址一致/);});
 test('network errors and GitHub 404/rate limit propagate without claiming compatibility',async()=>{for(const status of [404,403,429,500])await assert.rejects(()=>remoteFixture({fetchImpl:async()=>new Response('',{status})}).adapter.inspect('https://github.com/example/fixture'));await assert.rejects(()=>remoteFixture({fetchImpl:async()=>{throw new TypeError('network')}}).adapter.inspect('https://github.com/example/fixture'),/无法连接/);});

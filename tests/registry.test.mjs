@@ -107,7 +107,45 @@ test('Discord sources preserve original post only and cannot be installable pack
 test('source URL validation blocks SSRF, userinfo, alternate hosts and missing repository',async t=>{const f=await fixture(t),a=await f.login();for(const sourceUrl of ['http://github.com/a/b','https://github.com.evil.example/a/b','https://127.0.0.1/a/b','https://user:password@github.com/a/b','https://github.com/a/b?redirect=evil','https://github.com/example/missing']){f.advance(600001);assert.equal((await f.req('/api/submissions',{method:'POST',token:a.token,body:submission({sourceUrl})})).status,400);}assert.equal((await f.req('/api/catalog')).data.total,0);});
 test('duplicate source rejected only within same owner; other identities cannot probe catalog existence',async t=>{const f=await fixture(t),a=await f.login(),b=await f.login('B');assert.equal((await f.req('/api/submissions',{method:'POST',token:a.token,body:submission()})).status,201);assert.equal((await f.req('/api/submissions',{method:'POST',token:b.token,body:submission({sourceUrl:'https://github.com/Example/Fixture/'})})).status,201);assert.equal((await f.req('/api/submissions',{method:'POST',token:a.token,body:submission({sourceUrl:'https://github.com/Example/Fixture/'})})).status,409);});
 test('catalog paging/filter/search return only listed visible public DTOs',async t=>{const f=await fixture(t),a=await f.login();for(let i=0;i<3;i++)await f.req('/api/submissions',{method:'POST',token:a.token,body:submission({name:`Fixture ${i}`,sourceUrl:`https://github.com/example/repo${i}`})});await f.req('/api/submissions',{method:'POST',token:a.token,body:submission({name:'Discord Fixture',sourceType:'discord',sourceUrl:'https://discord.com/channels/444444444444444444/555555555555555555'})});const page=(await f.req('/api/catalog?page=1&pageSize=2')).data;assert.equal(page.items.length,2);assert.equal(page.total,3);assert.equal(page.hasMore,true);assert.equal((await f.req('/api/catalog?page=2&pageSize=2')).data.hasMore,false);assert.equal((await f.req('/api/catalog?source=discord')).data.total,0);assert.equal((await f.req('/api/catalog?source=discord',{token:a.token})).data.total,1);assert.equal((await f.req('/api/catalog?q=Fixture%201')).data.total,1);const entireCatalog=(await f.req('/api/catalog?pageSize=50')).data;for(const key of [IDS.A,'discord_id','owner_id','banned','username','email','token','moderation'])assert.equal(JSON.stringify(entireCatalog).includes(key),false);assert.equal((await f.req('/api/catalog?pageSize=999')).status,400);});
-test('text stays inert JSON, icon uploads/unsafe URLs and long fields rejected',async t=>{const f=await fixture(t),a=await f.login();const row=await f.req('/api/submissions',{method:'POST',token:a.token,body:submission({name:'<script>alert(1)</script>'})});assert.equal(row.status,201);assert.equal(row.data.name,'<script>alert(1)</script>');for(const change of [{name:'x'.repeat(101)},{icon:'data:image/png;base64,AAAA'},{icon:'javascript:alert(1)'},{tags:Array(9).fill('tag')},{icon:'https://127.0.0.1/icon.png'}]){f.advance(600001);assert.equal((await f.req(`/api/submissions/${row.data.id}`,{method:'PATCH',token:a.token,body:change})).status,400);}assert.equal((await f.req(`/api/submissions/${row.data.id}`,{method:'PATCH',token:a.token,body:{description:'x'.repeat(20000)}})).status,413);});
+test('text stays inert JSON, icon uploads/unsafe URLs and long fields rejected',async t=>{const f=await fixture(t),a=await f.login();const row=await f.req('/api/submissions',{method:'POST',token:a.token,body:submission({name:'<script>alert(1)</script>'})});assert.equal(row.status,201);assert.equal(row.data.name,'<script>alert(1)</script>');for(const change of [{name:'x'.repeat(101)},{icon:'data:image/png;base64,AAAA'},{icon:'javascript:alert(1)'},{icon:'https://127.0.0.1/icon.png'}]){f.advance(600001);assert.equal((await f.req(`/api/submissions/${row.data.id}`,{method:'PATCH',token:a.token,body:change})).status,400);}assert.equal((await f.req(`/api/submissions/${row.data.id}`,{method:'PATCH',token:a.token,body:{description:'x'.repeat(20000)}})).status,413);});
+test('GitHub About replaces legacy descriptions in Catalog and search, independent of old-client tags',async t=>{
+  let repositoryDescription='Repository About', unavailable=false;
+  const f=await fixture(t,{app:{catalogRefreshTtlMs:1},github:{async inspect(){
+    if(unavailable)throw Error('GitHub unavailable');
+    return {compatibility:'external',manifest:{description:'Package description'},repositoryDescription};
+  }}});
+  const a=await f.login(), post={method:'POST',token:a.token};
+  const {description,tags,...withoutDescription}=submission();
+  const created=await f.req('/api/submissions',{...post,body:withoutDescription});
+  assert.equal(created.status,201);
+  assert.equal(created.data.description,'Repository About');
+  const path='/api/submissions/'+created.data.id, detail='/api/catalog/'+created.data.id;
+  const legacyClient=await f.req(path,{method:'PATCH',token:a.token,body:{description:'Legacy client value',tags:['Legacy tag']}});
+  assert.equal(legacyClient.status,200);
+  assert.equal(legacyClient.data.description,'Repository About');
+  assert.deepEqual(legacyClient.data.tags,[]);
+
+  f.store.db.prepare('UPDATE submissions SET description=?,tags_json=?,github_json=? WHERE id=?')
+    .run('Legacy manual description','["Legacy tag"]','{"compatibility":"external"}',created.data.id);
+  assert.equal((await f.req('/api/submissions',{token:a.token})).data.items[0].description,'仓库简介待同步。');
+  assert.equal((await f.req('/api/catalog?q=Legacy')).data.total,0);
+  assert.equal((await f.req(detail)).data.description,'Repository About');
+  assert.equal((await f.req('/api/catalog?q=Repository')).data.total,1);
+  unavailable=true;
+  f.advance(60001);
+  assert.equal((await f.req(detail)).data.description,'Repository About');
+  unavailable=false;
+  repositoryDescription='';
+  f.advance(60001);
+  assert.equal((await f.req(detail)).data.description,'该仓库暂无简介。');
+  assert.equal((await f.req('/api/catalog?q=Repository')).data.total,0);
+
+  const discord= {...withoutDescription, sourceType:'discord',sourceUrl:'https://discord.com/channels/444444444444444444/555555555555555555'};
+  assert.equal((await f.req('/api/submissions',{...post,body:discord})).status,400);
+  const discordCreated=await f.req('/api/submissions',{...post,body:{...discord,description:'Discord description'}});
+  assert.equal(discordCreated.status,201);
+  assert.equal(discordCreated.data.description,'Discord description');
+});
 test('per-submitter spam limit does not authorize anonymous user',async t=>{const f=await fixture(t),a=await f.login();for(let i=0;i<5;i++)assert.equal((await f.req('/api/submissions',{method:'POST',token:a.token,body:submission({sourceUrl:`https://github.com/example/repo${i}`})})).status,201);assert.equal((await f.req('/api/submissions',{method:'POST',token:a.token,body:submission({sourceUrl:'https://github.com/example/last'})})).status,429);});
 test('SQLite restart preserves identities, ownership, moderation and audit; backup restores',async t=>{const folder=await mkdtemp(join(tmpdir(),'miemie-registry-test-'));t.after(()=>rm(folder,{recursive:true,force:true}));const path=join(folder,'test.sqlite'),f=await fixture(t,{path}),a=await f.login();const row=(await f.req('/api/submissions',{method:'POST',token:a.token,body:submission()})).data;const backupPath=join(folder,'backup.sqlite');await f.store.backup(backupPath);const reopened=openStore(path),backup=openStore(backupPath);try{assert.equal(reopened.db.prepare('PRAGMA user_version').get().user_version,5);assert.equal(reopened.db.prepare('SELECT owner_id FROM submissions WHERE id=?').get(row.id).owner_id,IDS.A);assert.equal(backup.db.prepare('SELECT count(*) AS n FROM submissions').get().n,1);assert.equal(backup.db.prepare("SELECT count(*) AS n FROM audit WHERE actor_id<>'server-bootstrap'").get().n,1);}finally{reopened.close();backup.close();}});
 test('production config requires HTTPS, real random session secret and exact redirect',()=>{assert.throws(()=>loadConfig({NODE_ENV:'production',GITHUB_AUTH_MODE:'app',GITHUB_APP_ID:'1',GITHUB_APP_INSTALLATION_ID:'2',GITHUB_APP_PRIVATE_KEY_PATH:'/external/test-key.pem',PUBLIC_BASE_URL:'http://localhost:8787'}));assert.throws(()=>loadConfig({NODE_ENV:'production',GITHUB_AUTH_MODE:'app',GITHUB_APP_ID:'1',GITHUB_APP_INSTALLATION_ID:'2',GITHUB_APP_PRIVATE_KEY_PATH:'/external/test-key.pem',PUBLIC_BASE_URL:'https://registry.example',CORS_ORIGINS:'https://tavern.example'}));assert.throws(()=>loadConfig({DISCORD_REDIRECT_URI:'https://evil.example/callback'}));assert.throws(()=>loadConfig({MIEMIE_ADMIN_DISCORD_IDS:'not-an-id'}));assert.throws(()=>loadConfig({CORS_ORIGINS:'*'}));});

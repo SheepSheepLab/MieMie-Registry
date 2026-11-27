@@ -98,7 +98,10 @@ export function openStore(path) {
   function profileDTO(identity) { return { displayName: identity.display_name, avatarUrl: identity.avatar_key ? `/api/avatars/${identity.avatar_key}` : null }; }
   function entryDTO(row, privateView = false) {
     const github = row.github_json ? JSON.parse(row.github_json) : null;
-    const dto = { id: row.id, visibility: row.visibility, extensionId: github?.manifest?.id || null, name: row.name, description: row.description, author: row.author, classification: canonicalClassification(row.classification), type: row.product_type, distribution: row.distribution, platforms: JSON.parse(row.platforms_json), websiteUrl: row.website_url, submitter: profileDTO(getIdentity(row.submitter_id)), githubUrl: row.source_type==='github'?row.source_url:null, discordUrl: row.source_type==='discord'?row.source_url:row.discord_post_url, discordPostUrl: row.source_type==='github'?row.discord_post_url:null, sourceType: row.source_type, sourceUrl: row.source_url, icon: github?.manifest?.iconUrl || row.icon || null, tags: JSON.parse(row.tags_json), version: github?.release?.version || null, github, createdAt: new Date(row.created_at).toISOString(), updatedAt: new Date(row.updated_at).toISOString() };
+    const description = row.source_type === 'github'
+      ? (github?.repositoryDescription ?? '仓库简介待同步。') || '该仓库暂无简介。'
+      : row.description;
+    const dto = { id: row.id, visibility: row.visibility, extensionId: github?.manifest?.id || null, name: row.name, description, author: row.author, classification: canonicalClassification(row.classification), type: row.product_type, distribution: row.distribution, platforms: JSON.parse(row.platforms_json), websiteUrl: row.website_url, submitter: profileDTO(getIdentity(row.submitter_id)), githubUrl: row.source_type==='github'?row.source_url:null, discordUrl: row.source_type==='discord'?row.source_url:row.discord_post_url, discordPostUrl: row.source_type==='github'?row.discord_post_url:null, sourceType: row.source_type, sourceUrl: row.source_url, icon: github?.manifest?.iconUrl || row.icon || null, tags: [], version: github?.release?.version || null, github, createdAt: new Date(row.created_at).toISOString(), updatedAt: new Date(row.updated_at).toISOString() };
     if (privateView) Object.assign(dto, { projectIdentityKey: projectIdentityKey(row), status: row.owner_status, moderation: row.moderation, moderationReason: row.moderation_reason, visibilitySourceUrl: row.visibility_source_url, moderationProtected: !!row.moderation_protected, unlistedAt: row.unlisted_at, purgeAfter: row.purge_after });
     return dto;
   }
@@ -121,7 +124,12 @@ export function openStore(path) {
     if (guildIds.length) { where += ` OR (visibility='discord_guild' AND visibility_guild_id IN (${guildIds.map(()=>'?').join(',')}))`; params.push(...guildIds); }
     where += ')';
     if(source){where+=' AND source_type=?';params.push(source);}
-    if(q){where+=' AND (instr(lower(name),lower(?))>0 OR instr(lower(description),lower(?))>0 OR instr(lower(author),lower(?))>0)';params.push(q,q,q);}
+    if(q){
+      where+=` AND (instr(lower(name),lower(?))>0
+        OR instr(lower(CASE WHEN source_type='discord' THEN description WHEN json_valid(github_json) THEN json_extract(github_json,'$.repositoryDescription') END),lower(?))>0
+        OR instr(lower(author),lower(?))>0)`;
+      params.push(q,q,q);
+    }
     const total=db.prepare(`SELECT count(*) AS n FROM submissions WHERE ${where}`).get(...params).n;
     const rows=db.prepare(`SELECT * FROM submissions WHERE ${where} ORDER BY created_at DESC,id LIMIT ? OFFSET ?`).all(...params,pageSize,(page-1)*pageSize);
     return {rows:rows.map(canonicalRow),total};
@@ -166,7 +174,11 @@ export function openStore(path) {
         return {changes:0, conflict:error.code};
       }
       const previous = current.github_json ? JSON.parse(current.github_json) : null;
-      if (github.compatibility !== 'installable' && previous?.compatibility === 'installable') return {changes:0};
+      if (github.compatibility !== 'installable' && previous?.compatibility === 'installable') {
+        if (typeof github.repositoryDescription !== 'string' || github.repositoryDescription === previous.repositoryDescription) return {changes:0};
+        const updated = {...previous, repositoryDescription:github.repositoryDescription};
+        return db.prepare('UPDATE submissions SET github_json=? WHERE id=?').run(JSON.stringify(updated),row.id);
+      }
       return db.prepare('UPDATE submissions SET github_json=?,distribution=? WHERE id=?').run(candidate.github_json,productDistribution(current.product_type,current.source_type,github),row.id);
     });
   }
