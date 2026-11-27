@@ -38,7 +38,7 @@ test('content edits preserve the latest Owner identity, protection and hold duri
   await govern(f, owner, `submissions/${row.id}/protection`, {enabled:false});
   pause = true;
   const pending = f.req(`/api/submissions/${row.id}`, {method:'PATCH', token:author.token,
-    body:{description:'Edited content', sourceUrl:'https://github.com/example/revalidated'}});
+    body:{name:'Edited content', sourceUrl:'https://github.com/example/revalidated'}});
   await ready;
   await govern(f, owner, `submissions/${row.id}/protection`, {enabled:true});
   await govern(f, owner, `submissions/${row.id}/security-hold`, {enabled:true});
@@ -47,7 +47,7 @@ test('content edits preserve the latest Owner identity, protection and hold duri
   assert.equal((await pending).status, 200);
   const saved = f.store.getEntry(row.id);
   assert.equal(saved.classification, 'community');
-  assert.equal(saved.description, 'Edited content');
+  assert.equal(saved.name, 'Edited content');
   assert.equal(saved.moderation_protected, 1);
   assert.equal(saved.security_hold, 1);
   assert.equal(saved.owner_id, IDS.A);

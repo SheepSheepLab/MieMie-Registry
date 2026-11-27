@@ -329,7 +329,7 @@ ${notification}
         if (!ownMatch[2] && method === 'PATCH') {
           canSubmit(user); limit(`edit:${user.discord_id}`, 30, 60000);
           const body = await readJSON(req);
-          const merged = { name: row.name, description: row.description, author: row.author, sourceType: row.source_type, sourceUrl: row.source_url, discordPostUrl:row.discord_post_url, icon: row.icon, tags: JSON.parse(row.tags_json), visibility: row.visibility, visibilitySourceUrl: row.visibility_source_url, type:row.product_type,platforms:JSON.parse(row.platforms_json),websiteUrl:row.website_url,classification:row.classification, ...body };
+          const merged = { name: row.name, description: row.source_type==='discord'?row.description:'', author: row.author, sourceType: row.source_type, sourceUrl: row.source_url, discordPostUrl:row.discord_post_url, icon: row.icon, visibility: row.visibility, visibilitySourceUrl: row.visibility_source_url, type:row.product_type,platforms:JSON.parse(row.platforms_json),websiteUrl:row.website_url,classification:row.classification, ...body };
           if (merged.sourceType === 'discord' && Object.hasOwn(body, 'sourceUrl') && !Object.hasOwn(body, 'visibilitySourceUrl')) merged.visibilitySourceUrl = null;
           // Do not mix a stored new field with an explicitly edited old alias.
           if (!Object.hasOwn(body,'discordPostUrl') && (merged.sourceType==='discord' || Object.hasOwn(body,'discordUrl'))) {

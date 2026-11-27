@@ -146,7 +146,7 @@ test('official project selectors are locked for submitter, Publisher, Admin and 
     const before = f.store.getEntry(row.id);
     for (const change of [
       {sourceUrl:'https://github.com/example/project-b'},
-      {sourceType:'discord', sourceUrl:'https://discord.com/channels/444444444444444444/555555555555555555'},
+      {sourceType:'discord', sourceUrl:'https://discord.com/channels/444444444444444444/555555555555555555', description:'Discord project description'},
       {type:'standalone_app'}, {websiteUrl:'https://example.com/other-project'},
     ]) {
       const r = await patch(f, actor, row.id, change);
@@ -262,7 +262,7 @@ test('ordinary in-flight content edit preserves promotion, protection, hold and 
   const f = await fixture(t, {beforeInspect:async () => {if (pause) {started(); await gate;}}});
   const a = await f.login(), owner = await f.login('OWNER'), row = await create(f, a);
   pause = true; f.advance(60001);
-  const pending = patch(f, a, row.id, {description:'Ordinary content edit'});
+  const pending = patch(f, a, row.id, {name:'Ordinary content edit'});
   await ready;
   assert.equal((await classify(f, owner, row.id, 'official')).status, 200);
   for (const [kind, body] of [['security-hold',{enabled:true}],['moderation',{action:'hide'}]]) {
@@ -271,7 +271,7 @@ test('ordinary in-flight content edit preserves promotion, protection, hold and 
   release();
   assert.equal((await pending).status, 200);
   const saved = f.store.getEntry(row.id);
-  assert.equal(saved.description, 'Ordinary content edit');
+  assert.equal(saved.name, 'Ordinary content edit');
   assert.equal(saved.classification, 'official');
   assert.equal(saved.moderation_protected, 1);
   assert.equal(saved.security_hold, 1);

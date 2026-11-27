@@ -51,7 +51,10 @@ export function createGitHubAdapter({ fetchImpl = fetch, githubClient } = {}) {
     if (!plain(repository) || repository.private !== false || repository.full_name?.toLowerCase() !== `${repo.owner}/${repo.repo}`.toLowerCase()) fail(400, 'invalid_repository', '仓库必须公开且与输入地址一致');
     repo = githubRepo(`https://github.com/${repository.full_name}`);
     base = `https://api.github.com/repos/${repo.owner}/${repo.repo}`;
-    const result = { owner: repo.owner, repo: repo.repo, compatibility: 'external', manifest: null, release: null, reason: '没有符合规范的可安装 Release；可前往作者 GitHub 获取' };
+    const repositoryDescription = typeof repository.description === 'string'
+      ? repository.description.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '').trim().slice(0, 2000)
+      : '';
+    const result = { owner: repo.owner, repo: repo.repo, repositoryDescription, compatibility: 'external', manifest: null, release: null, reason: '没有符合规范的可安装 Release；可前往作者 GitHub 获取' };
     const all = [];
     for (let page = 1; page <= 5; page++) {
       const rows = await json(`${base}/releases?per_page=100&page=${page}`, 4 * 1024 * 1024);
